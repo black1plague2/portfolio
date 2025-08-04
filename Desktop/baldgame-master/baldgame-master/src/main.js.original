@@ -1,0 +1,3843 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { FilmPass } from 'three/examples/jsm/postprocessing/FilmPass.js';
+import { gsap } from 'gsap';
+import GUI from 'lil-gui';
+
+// Loading Brain 3D Manager
+class LoadingBrain3D {
+    constructor() {
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.brainModel = null;
+        this.colorProgress = 0;
+        this.targetProgress = 0;
+        this.fbxLoader = new FBXLoader();
+    }
+
+    async init() {
+        const container = document.getElementById('loading-brain-3d');
+        if (!container) return;
+
+        // Setup scene
+        this.scene = new THREE.Scene();
+        
+        // Setup camera
+        this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+        this.camera.position.set(0, 0, 12); // Move camera back to see larger brain
+        
+        // Setup renderer
+        this.renderer = new THREE.WebGLRenderer({ 
+            alpha: true, 
+            antialias: true 
+        });
+        this.renderer.setSize(400, 400); // Match the larger container
+        this.renderer.setClearColor(0x000000, 0);
+    }
+    updateHover() {
+        // Efficient hover detection and info panel management
+        const gameInfoPanel = document.getElementById('gameInfoPanel');
+        const controlsHint = document.getElementById('controlsHint');
+        const instructionsPanel = document.getElementById('instructionsPanel');
+        const mouseX = (this.mouse.x + 1) / 2 * window.innerWidth;
+        const mouseY = (-this.mouse.y + 1) / 2 * window.innerHeight;
+
+        // Check if over game info panel
+        const panelRect = gameInfoPanel.getBoundingClientRect();
+        const isOverGamePanel = mouseX >= panelRect.left && mouseX <= panelRect.right && mouseY >= panelRect.top && mouseY <= panelRect.bottom;
+
+        // Check if over controls panel
+        let isOverControlsPanel = false;
+        if (controlsHint && controlsHint.classList.contains('visible')) {
+            const controlsRect = controlsHint.getBoundingClientRect();
+            isOverControlsPanel = mouseX >= controlsRect.left && mouseX <= controlsRect.right && mouseY >= controlsRect.top && mouseY <= controlsRect.bottom;
+        }
+
+        // Check if over instructions panel
+        let isOverInstructionsPanel = false;
+        if (instructionsPanel && instructionsPanel.classList.contains('open')) {
+            const instructionsRect = instructionsPanel.getBoundingClientRect();
+            isOverInstructionsPanel = mouseX >= instructionsRect.left && mouseX <= instructionsRect.right && mouseY >= instructionsRect.top && mouseY <= instructionsRect.bottom;
+        }
+
+        // Cursor hover state for UI panels
+        if ((isOverGamePanel && gameInfoPanel.classList.contains('visible')) || isOverControlsPanel || isOverInstructionsPanel) {
+            this.cursor?.classList.add('hover');
+            return;
+        } else {
+            this.cursor?.classList.remove('hover');
+        }
+
+        // Clear hover timeout for efficiency
+        if (this.hoverTimeout) {
+            clearTimeout(this.hoverTimeout);
+            this.hoverTimeout = null;
+        }
+
+        // Raycaster for brains
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+        this.raycaster.params.Points.threshold = 0.01;
+        this.raycaster.params.Line.threshold = 0.01;
+        const intersects = this.raycaster.intersectObjects(this.gameBrains, true);
+
+        // Reset previous hover state
+        if (this.hoveredCube && (!intersects.length || this.hoveredCube !== intersects[0].object)) {
+            gsap.to(this.hoveredCube.scale, { duration: 0.15, x: 1, y: 1, z: 1, ease: "power2.out" });
+            if (this.hoveredCube.userData.mainBrain) {
+                this.hoveredCube.userData.mainBrain.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        gsap.to(child.material.color, { duration: 0.1, r: 1, g: 1, b: 0, ease: "power1.out" });
+                        gsap.to(child.material.emissive, { duration: 0.1, r: 1, g: 1, b: 0, ease: "power1.out" });
+                        gsap.to(child.material, { duration: 0.1, emissiveIntensity: 0.2, ease: "power1.out" });
+                    }
+                });
+            }
+            // Hide info panel when not hovering any brain
+            window.closeGamePanel();
+            this.hoveredCube = null;
+        }
+
+        if (intersects.length > 0) {
+            // Find the brain group (parent)
+            let target = intersects[0].object;
+            while (target.parent && !this.gameBrains.includes(target)) {
+                target = target.parent;
+            }
+            if (this.gameBrains.includes(target)) {
+                if (this.hoveredCube !== target) {
+                    if (this.audioEnabled) this.sounds.hover();
+                }
+                this.hoveredCube = target;
+                this.cursor?.classList.add('hover');
+                if (target.userData.gameData) {
+                    window.showGameInfo(target.userData.gameData, true);
+                }
+                return;
+            }
+        } else {
+            // If not hovering any brain, hide info panel
+            window.closeGamePanel();
+            this.hoveredCube = null;
+        }
+    }
+    
+    createNeuralParticles() {
+        const particleCount = 100;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        
+        for (let i = 0; i < particleCount; i++) {
+            const i3 = i * 3;
+            const radius = 4 + Math.random() * 2;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.random() * Math.PI;
+            
+            positions[i3] = radius * Math.sin(phi) * Math.cos(theta);
+            positions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+            positions[i3 + 2] = radius * Math.cos(phi);
+        }
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        
+        const material = new THREE.PointsMaterial({
+            color: 0x00ffff,
+            size: 0.2,
+            transparent: true,
+            opacity: 0,
+            blending: THREE.AdditiveBlending
+        });
+        
+        this.neuralParticles = new THREE.Points(geometry, material);
+        this.scene.add(this.neuralParticles);
+    }
+    
+    createRegenerationParticles() {
+        const particleCount = 200;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const velocities = new Float32Array(particleCount * 3);
+        
+        for (let i = 0; i < particleCount; i++) {
+            const i3 = i * 3;
+            // Start particles scattered around
+            positions[i3] = (Math.random() - 0.5) * 20;
+            positions[i3 + 1] = (Math.random() - 0.5) * 20;
+            positions[i3 + 2] = (Math.random() - 0.5) * 20;
+            
+            // Give them velocity towards center
+            velocities[i3] = -positions[i3] * 0.01;
+            velocities[i3 + 1] = -positions[i3 + 1] * 0.01;
+            velocities[i3 + 2] = -positions[i3 + 2] * 0.01;
+        }
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
+        
+        const material = new THREE.PointsMaterial({
+            color: 0xffaa00,
+            size: 0.1,
+            transparent: true,
+            opacity: 0,
+            blending: THREE.AdditiveBlending
+        });
+        
+        this.regenerationParticles = new THREE.Points(geometry, material);
+        this.scene.add(this.regenerationParticles);
+    }
+    
+    startRegenerationSequence() {
+        // Begin regeneration animation immediately for visual effect
+        if (this.brainParts && this.brainParts.length > 0) {
+            this.brainParts.forEach((part, index) => {
+                // Stagger the regeneration start times
+                const delay = (index * 100) + (Math.random() * 300); // Milliseconds
+                
+                setTimeout(() => {
+                    this.startPartRegeneration(part, index);
+                }, delay);
+            });
+        }
+    }
+
+    startImmediateRegeneration() {
+        if (!this.brainParts || this.brainParts.length === 0) {
+            return;
+        }
+        
+        console.log('Starting immediate brain regeneration with', this.brainParts.length, 'parts');
+        
+        // Start regenerating parts immediately with staggered delays
+        this.brainParts.forEach((part, index) => {
+            // Start each part with a small delay (0.05s intervals)
+            const delay = index * 0.05; // Very fast stagger - brain appears instantly
+            this.startPartRegenerationImmediate(part, delay);
+        });
+        
+        // Show particles right away
+        if (this.neuralParticles) {
+            this.neuralParticles.material.opacity = 0.4;
+        }
+        if (this.regenerationParticles) {
+            this.regenerationParticles.material.opacity = 0.6;
+        }
+        
+        // Set regeneration as active
+        this.regenerationActive = true;
+        this.regenerationStartTime = Date.now();
+    }
+
+    startPartRegenerationImmediate(part, delay) {
+        setTimeout(() => {
+            part.userData.regenerationStarted = true;
+            
+            // Animate part moving to its original position and scaling up
+            if (typeof gsap !== 'undefined') {
+                gsap.to(part.position, {
+                    duration: 1.2, // Faster for immediate startup
+                    x: part.userData.originalPosition.x,
+                    y: part.userData.originalPosition.y,
+                    z: part.userData.originalPosition.z,
+                    ease: "back.out(1.4)"
+                });
+                
+                gsap.to(part.scale, {
+                    duration: 1.2, // Match position timing
+                    x: part.userData.originalScale.x,
+                    y: part.userData.originalScale.y,
+                    z: part.userData.originalScale.z,
+                    ease: "back.out(1.4)"
+                });
+                
+                // Fade in and add color quickly
+                gsap.to(part.material, {
+                    duration: 1.5, // Faster color fill
+                    opacity: part.material.userData.targetOpacity || 0.9,
+                    ease: "power2.out"
+                });
+                
+                // Mark as regenerating for color animation
+                part.material.userData.isRegenerating = true;
+            } else {
+                // Fallback without GSAP
+                part.position.copy(part.userData.originalPosition);
+                part.scale.copy(part.userData.originalScale);
+                part.material.opacity = part.material.userData.targetOpacity || 0.9;
+                part.material.userData.isRegenerating = true;
+            }
+        }, delay * 1000);
+    }
+
+    updateProgress(progress) {
+        this.targetProgress = Math.min(1, Math.max(0, progress));
+        
+        // The brain regeneration now happens independently through startRegenerationSequence()
+        // This method just updates the overall loading progress for color intensity
+        
+        // Animate neural particles based on progress
+        if (this.neuralParticles) {
+            this.neuralParticles.material.opacity = Math.min(0.8, progress * 1.2);
+        }
+        
+        // Show regeneration particles during brain assembly
+        if (this.regenerationParticles) {
+            this.regenerationParticles.material.opacity = Math.min(0.6, progress * 1.5);
+        }
+    }
+    
+    startPartRegeneration(part, index) {
+        if (part.userData.regenerationStarted) return;
+        
+        part.userData.regenerationStarted = true;
+        
+        // Animate part moving to its original position and scaling up
+        const delay = part.material.userData.regenerationDelay || (index * 0.05); // Shorter delay
+        
+        setTimeout(() => {
+            // GSAP animation for smooth movement and scaling
+            if (typeof gsap !== 'undefined') {
+                // Move to original position
+                gsap.to(part.position, {
+                    duration: 2, // Longer duration for smoother movement
+                    x: part.userData.originalPosition.x,
+                    y: part.userData.originalPosition.y,
+                    z: part.userData.originalPosition.z,
+                    ease: "back.out(1.2)" // Less aggressive bounce
+                });
+                
+                // Scale up to original size
+                gsap.to(part.scale, {
+                    duration: 2,
+                    x: part.userData.originalScale.x,
+                    y: part.userData.originalScale.y,
+                    z: part.userData.originalScale.z,
+                    ease: "back.out(1.2)"
+                });
+                
+                // Progressive opacity and color change
+                gsap.to(part.material, {
+                    duration: 3, // Longer color transition
+                    opacity: part.material.userData.targetOpacity || 0.9,
+                    ease: "power2.out",
+                    onUpdate: function() {
+                        // Update opacity in userData for color animation
+                        part.material.userData.currentOpacity = part.material.opacity;
+                    }
+                });
+                
+                // Mark as regenerating for color animation
+                part.material.userData.isRegenerating = true;
+                
+            } else {
+                // Fallback without GSAP - immediate transformation
+                part.position.copy(part.userData.originalPosition);
+                part.scale.copy(part.userData.originalScale);
+                part.material.opacity = part.material.userData.targetOpacity || 0.9;
+                part.material.userData.currentOpacity = part.material.opacity;
+                part.material.userData.isRegenerating = true;
+            }
+        }, delay * 1000);
+    }
+
+    animate() {
+        requestAnimationFrame(() => this.animate());
+        
+        // Smooth color progress interpolation - faster response
+        this.colorProgress += (this.targetProgress - this.colorProgress) * 0.05;
+        
+        // Update brain colors based on progress and regeneration
+        if (this.brainModel) {
+            if (this.brainParts && this.brainParts.length > 0) {
+                // Handle individual parts regeneration
+                this.brainParts.forEach((part, index) => {
+                    if (part.material && part.material.userData) {
+                        const userData = part.material.userData;
+                        
+                        if (userData.isRegenerating) {
+                            // Use the current opacity from the animation
+                            const currentOpacity = userData.currentOpacity || part.material.opacity;
+                            
+                            // Color progression based on opacity (as parts come together, they gain color)
+                            const colorProgress = Math.min(1, currentOpacity * 2);
+                            
+                            const currentColor = userData.originalColor.clone().lerp(
+                                userData.targetColor, 
+                                colorProgress
+                            );
+                            part.material.color = currentColor;
+                            
+                            // Add progressive glowing effect
+                            const emissiveIntensity = 0.4 * colorProgress;
+                            part.material.emissive = currentColor.clone().multiplyScalar(emissiveIntensity);
+                            
+                            // Add pulsing effect for regenerating parts
+                            const time = Date.now() * 0.003;
+                            const pulse = Math.sin(time + index) * 0.2 + 1;
+                            part.material.emissiveIntensity = emissiveIntensity * pulse;
+                        }
+                    }
+                });
+            } else {
+                // Fallback brain animation
+                this.brainModel.traverse((child) => {
+                    if (child.isMesh && child.material.userData) {
+                        const userData = child.material.userData;
+                        if (userData.isRegenerating) {
+                            const currentOpacity = userData.currentOpacity || child.material.opacity;
+                            const colorProgress = Math.min(1, currentOpacity * 2);
+                            
+                            const currentColor = userData.originalColor.clone().lerp(
+                                userData.targetColor, 
+                                colorProgress
+                            );
+                            child.material.color = currentColor;
+                            child.material.emissive = currentColor.clone().multiplyScalar(0.3 * colorProgress);
+                        }
+                    }
+                });
+            }
+            
+            // Gentle rotation with some wobble during regeneration
+            const time = Date.now() * 0.001;
+            this.brainModel.rotation.y += 0.008;
+            
+            // More dynamic movement during regeneration
+            const regeneratingCount = this.brainParts ? 
+                this.brainParts.filter(part => part.userData.regenerationStarted && part.material.userData.isRegenerating).length : 0;
+            const regenerationIntensity = regeneratingCount / (this.brainParts ? this.brainParts.length : 1);
+            
+            this.brainModel.rotation.x = Math.sin(time * 0.7) * 0.1 * regenerationIntensity;
+            this.brainModel.rotation.z = Math.sin(time * 0.5) * 0.05 * regenerationIntensity;
+            
+            // Add floating motion that gets calmer as regeneration completes
+            this.brainModel.position.y = Math.sin(time * 0.8) * 0.3 * (1 - this.colorProgress * 0.5);
+        }
+        
+        // Animate neural particles if they exist
+        if (this.neuralParticles) {
+            this.neuralParticles.rotation.y += 0.002;
+            this.neuralParticles.rotation.x += 0.001;
+            
+            // Pulsing effect
+            const time = Date.now() * 0.003;
+            this.neuralParticles.material.size = 0.2 + Math.sin(time) * 0.1;
+        }
+        
+        // Animate regeneration particles
+        if (this.regenerationParticles && this.colorProgress > 0.1) {
+            this.regenerationParticles.material.opacity = Math.min(0.8, this.colorProgress * 1.5);
+            
+            // Move particles towards center
+            const positions = this.regenerationParticles.geometry.attributes.position;
+            const velocities = this.regenerationParticles.geometry.attributes.velocity;
+            
+            for (let i = 0; i < positions.count; i++) {
+                const i3 = i * 3;
+                
+                // Update positions based on velocities
+                positions.array[i3] += velocities.array[i3];
+                positions.array[i3 + 1] += velocities.array[i3 + 1];
+                positions.array[i3 + 2] += velocities.array[i3 + 2];
+                
+                // If particle is close to center, respawn it at edge
+                const distance = Math.sqrt(
+                    positions.array[i3] ** 2 +
+                    positions.array[i3 + 1] ** 2 +
+                    positions.array[i3 + 2] ** 2
+                );
+                
+                if (distance < 1) {
+                    // Respawn at random edge position
+                    const radius = 8 + Math.random() * 4;
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.random() * Math.PI;
+                    
+                    positions.array[i3] = radius * Math.sin(phi) * Math.cos(theta);
+                    positions.array[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+                    positions.array[i3 + 2] = radius * Math.cos(phi);
+                    
+                    // Update velocity towards center
+                    velocities.array[i3] = -positions.array[i3] * 0.01;
+                    velocities.array[i3 + 1] = -positions.array[i3 + 1] * 0.01;
+                    velocities.array[i3 + 2] = -positions.array[i3 + 2] * 0.01;
+                }
+            }
+            
+            positions.needsUpdate = true;
+        }
+        
+        this.renderer.render(this.scene, this.camera);
+    }
+
+    dispose() {
+        if (this.renderer) {
+            const container = document.getElementById('loading-brain-3d');
+            if (container && this.renderer.domElement.parentNode === container) {
+                container.removeChild(this.renderer.domElement);
+            }
+            this.renderer.dispose();
+        }
+    }
+}
+
+class GamePortfolio3D {
+    constructor() {
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.controls = null;
+        this.composer = null;
+        this.gui = null;
+        this.clock = new THREE.Clock();
+        
+        // Loading brain instance
+        this.loadingBrain = new LoadingBrain3D();
+        
+        // Game objects
+        this.gameBrains = [];
+        this.selectedGame = null;
+        this.backgroundParticles = null;
+        this.interactiveElements = [];
+        this.particleTrails = [];
+        this.centralBrain = null;
+        this.electricalConnections = [];
+        this.neuralPulses = [];
+        
+        // Interaction & Controls
+        this.mouse = new THREE.Vector2();
+        this.raycaster = new THREE.Raycaster();
+        this.hoveredCube = null;
+        this.keys = {};
+        this.flyMode = false;
+        this.hoverTimeout = null; // Add hover timeout for stability
+        this.isHovering = false; // Track hovering state for performance
+        
+        // Audio System
+        this.audioContext = null;
+        this.audioEnabled = true;
+        this.sounds = {};
+        
+        // Performance & Effects
+        this.performanceMode = 'high'; // 'high' or 'low'
+        this.easterEggActive = false;
+        this.magicMode = false;
+        this.animations = [];
+        
+        // Matrix Rain Easter Egg
+        this.matrixRainActive = false;
+        this.matrixDrops = [];
+        this.matrixCameraInterval = null;
+        
+        // Camera shake
+        this.cameraShake = { intensity: 0, decay: 0.95 };
+        
+        // Loaders
+        this.gltfLoader = new GLTFLoader();
+        this.objLoader = new OBJLoader();
+        this.fbxLoader = new FBXLoader();
+        
+        // Games data - positioned around the brain (Real games)
+        this.games = [
+            {
+                id: 'newcake',
+                title: 'NewCake',
+                description: 'An innovative web-based cake creation and customization game where players can design, bake, and decorate virtual cakes with realistic physics and stunning visual effects.',
+                tags: ['Simulation', 'Creative', 'Web Game', 'Food'],
+                url: 'https://newcake.vercel.app/',
+                position: { x: -12, y: 8, z: 0 },
+                color: 0xffff00,
+                features: [
+                    'Interactive cake design system',
+                    'Realistic baking simulation',
+                    'Creative decoration tools',
+                    'Web-based gameplay',
+                    'Modern UI/UX design'
+                ],
+                technology: ['JavaScript', 'WebGL', 'CSS3', 'HTML5'],
+                gameplay: 'Design and create beautiful cakes with intuitive drag-and-drop interface, realistic physics, and extensive customization options.',
+                status: 'Live',
+                screenshots: []
+            },
+            {
+                id: 'ninja-jump',
+                title: 'Ninja Jump',
+                description: 'A fast-paced platformer game featuring a skilled ninja character navigating through challenging levels with precise jumping mechanics and smooth controls.',
+                tags: ['Platformer', 'Action', 'Ninja', 'Arcade'],
+                url: 'http://baldgame.xyz',
+                position: { x: 8, y: 10, z: -8 },
+                color: 0xffffff,
+                features: [
+                    'Precise jumping mechanics',
+                    'Challenging level design',
+                    'Ninja-themed gameplay',
+                    'Smooth character controls',
+                    'Arcade-style action'
+                ],
+                technology: ['JavaScript', 'HTML5 Canvas', 'CSS3'],
+                gameplay: 'Navigate through challenging levels as a ninja, using precise jumping and timing to overcome obstacles and reach the end goal.',
+                status: 'Live',
+                screenshots: []
+            },
+            {
+                id: 'tower-defense',
+                title: 'Tower Defense Pro',
+                description: 'Strategic tower defense game with unique tower combinations, epic boss battles, and multiple difficulty levels.',
+                tags: ['Strategy', 'Defense', 'Tactical'],
+                url: '#tower-defense',
+                position: { x: 15, y: -2, z: 6 },
+                color: 0xffff00,
+                features: [
+                    'Strategic tower placement',
+                    'Multiple tower types',
+                    'Boss battles',
+                    'Upgrade system'
+                ],
+                technology: ['JavaScript', 'Three.js', 'WebGL'],
+                gameplay: 'Build and upgrade towers to defend against waves of enemies in this strategic defense game.',
+                status: 'In Development',
+                screenshots: []
+            },
+            {
+                id: 'rpg-adventure',
+                title: 'Epic RPG Adventure',
+                description: 'Open-world RPG with rich storytelling, character customization, and immersive quest systems in a fantasy realm.',
+                tags: ['RPG', 'Fantasy', 'Open World'],
+                url: '#rpg-adventure',
+                position: { x: -10, y: -8, z: 12 },
+                color: 0xffffff,
+                features: [
+                    'Open world exploration',
+                    'Character customization',
+                    'Quest system',
+                    'Fantasy setting'
+                ],
+                technology: ['JavaScript', 'WebGL', 'Node.js'],
+                gameplay: 'Explore a vast fantasy world, complete quests, and develop your character in this immersive RPG experience.',
+                status: 'Concept',
+                screenshots: []
+            },
+            {
+                id: 'platformer',
+                title: 'Neon Platformer',
+                description: 'Fast-paced 2D platformer with smooth controls, challenging levels, and a vibrant neon-styled aesthetic.',
+                tags: ['Platformer', '2D', 'Arcade'],
+                url: '#platformer',
+                position: { x: 6, y: -6, z: -10 },
+                color: 0xffff00,
+                features: [
+                    'Neon visual style',
+                    'Smooth platforming',
+                    'Challenging levels',
+                    'Retro aesthetic'
+                ],
+                technology: ['JavaScript', 'HTML5 Canvas', 'CSS3'],
+                gameplay: 'Navigate through neon-lit levels with precise platforming mechanics and vibrant visual effects.',
+                status: 'Planning',
+                screenshots: []
+            },
+            {
+                id: 'neural-sim',
+                title: 'Neural Simulator',
+                description: 'Experience consciousness simulation with advanced AI interactions and mind-bending reality puzzles.',
+                tags: ['Simulation', 'AI', 'Consciousness'],
+                url: '#neural-sim',
+                position: { x: -6, y: 4, z: -12 },
+                color: 0xffffff,
+                features: [
+                    'AI consciousness simulation',
+                    'Reality puzzles',
+                    'Neural network visualization',
+                    'Mind-bending gameplay'
+                ],
+                technology: ['JavaScript', 'Machine Learning', 'WebGL'],
+                gameplay: 'Explore the mysteries of consciousness through AI-powered simulations and complex puzzles.',
+                status: 'Research',
+                screenshots: []
+            }
+        ];
+        
+        this.init();
+    }
+
+    async init() {
+        // Initialize 3D loading brain FIRST - before everything else
+        await this.loadingBrain.init();
+        this.loadingBrain.updateProgress(0.05); // Small initial progress
+        
+        // Update loading status
+        this.updateLoadingStatus('Scanning Neural Fragments...');
+        
+        this.setupScene();
+        this.loadingBrain.updateProgress(0.15);
+        
+        this.setupCamera();
+        this.setupRenderer();
+        this.loadingBrain.updateProgress(0.25);
+        
+        this.setupControls();
+        this.setupPostProcessing();
+        this.loadingBrain.updateProgress(0.35);
+        
+        this.setupGUI();
+        this.setupAudio();
+        this.setupEventListeners();
+        this.updateLoadingStatus('Regenerating Brain Structure...');
+        this.loadingBrain.updateProgress(0.45);
+        
+        this.updateLoadingStatus('Assembling Neural Networks...');
+        await this.createPortfolio();
+        this.loadingBrain.updateProgress(0.8);
+        
+        this.updateLoadingStatus('Connecting Synapses...');
+        this.setupInteractions();
+        this.loadingBrain.updateProgress(0.9);
+        
+        this.updateLoadingStatus('Brain Fully Regenerated!');
+        this.animate();
+        this.loadingBrain.updateProgress(1.0);
+        
+        // Hide loading screen with enhanced animation
+        setTimeout(() => {
+            this.updateLoadingStatus('Bald Verse Fully Operational!');
+            setTimeout(() => {
+                gsap.to('#loading', {
+                    duration: 1.5,
+                    opacity: 0,
+                    scale: 0.8,
+                    ease: "power2.inOut",
+                    onComplete: () => {
+                        document.getElementById('loading').style.display = 'none';
+                        this.loadingBrain.dispose(); // Clean up loading brain
+                    }
+                });
+            }, 500);
+        }, 2000);
+    }
+
+    updateLoadingStatus(status) {
+        const statusElement = document.querySelector('.loading-status');
+        if (statusElement) {
+            statusElement.textContent = status;
+        }
+    }
+
+    setupScene() {
+        this.scene = new THREE.Scene();
+        this.scene.fog = new THREE.FogExp2(0x000000, 0.0008);
+        
+        // Ambient lighting for soft illumination
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+        this.scene.add(ambientLight);
+        
+        // Main directional light
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 10, 5);
+        directionalLight.castShadow = true;
+        this.scene.add(directionalLight);
+        
+        // Yellow accent light
+        const yellowLight = new THREE.PointLight(0xffff00, 0.5, 50);
+        yellowLight.position.set(-10, 5, 10);
+        this.scene.add(yellowLight);
+        
+        // White fill light
+        const whiteLight = new THREE.PointLight(0xffffff, 0.3, 30);
+        whiteLight.position.set(15, -5, -10);
+        this.scene.add(whiteLight);
+    }
+
+    setupCamera() {
+        this.camera = new THREE.PerspectiveCamera(
+            60,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
+        this.camera.position.set(0, 0, 25); // Move camera further back
+        this.camera.lookAt(0, 0, 0); // Ensure camera looks at center
+        
+        console.log('Camera position:', this.camera.position);
+        console.log('Camera looking at:', this.camera.getWorldDirection(new THREE.Vector3()));
+    }
+
+    setupRenderer() {
+        this.renderer = new THREE.WebGLRenderer({ 
+            antialias: true,
+            alpha: true 
+        });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        this.renderer.setClearColor(0x000000, 1);
+        
+        document.getElementById('canvas-container').appendChild(this.renderer.domElement);
+    }
+
+    setupControls() {
+        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        this.controls.maxDistance = 100; // Allow zooming out more
+        this.controls.minDistance = 5;
+        this.controls.enablePan = false;
+        this.controls.maxPolarAngle = Math.PI * 0.75;
+        this.controls.minPolarAngle = Math.PI * 0.25;
+        this.controls.target.set(0, 0, 0); // Make sure controls target the center
+        
+        console.log('Controls target:', this.controls.target);
+    }
+
+    setupPostProcessing() {
+        this.composer = new EffectComposer(this.renderer);
+        
+        const renderPass = new RenderPass(this.scene, this.camera);
+        this.composer.addPass(renderPass);
+        
+        this.bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            0.4, 0.6, 0.7
+        );
+        this.composer.addPass(this.bloomPass);
+        
+        // Film grain effect for retro feel
+        this.filmPass = new FilmPass(0.35, 0.5, 2048, false);
+        this.composer.addPass(this.filmPass);
+    }
+
+    setupGUI() {
+        this.gui = new GUI();
+        this.gui.title('Portfolio Controls');
+        
+        const effectsFolder = this.gui.addFolder('Visual Effects');
+        effectsFolder.add(this.bloomPass, 'strength', 0, 3, 0.1).name('Bloom Strength');
+        effectsFolder.add(this.bloomPass, 'radius', 0, 1, 0.01).name('Bloom Radius');
+        effectsFolder.add(this.filmPass.uniforms.intensity, 'value', 0, 1, 0.01).name('Film Grain');
+        
+        const interactionFolder = this.gui.addFolder('Interaction');
+        interactionFolder.add(this, 'flyMode').name('Fly Mode').onChange((value) => {
+            this.controls.enablePan = value;
+            this.controls.enableRotate = !value;
+        });
+        interactionFolder.add(this, 'magicMode').name('Magic Mode');
+        
+        this.gui.close();
+    }
+
+    setupAudio() {
+        try {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            this.createSounds();
+        } catch (error) {
+            console.log('Audio context not supported');
+            this.audioEnabled = false;
+        }
+    }
+
+    createSounds() {
+        // Create procedural sounds
+        this.sounds = {
+            hover: this.createTone(800, 0.1, 0.05),
+            click: this.createTone(1200, 0.15, 0.1),
+            magic: this.createTone(600, 0.3, 0.2),
+            whoosh: this.createNoise(0.1, 0.15)
+        };
+    }
+
+    createTone(frequency, volume, duration) {
+        return () => {
+            if (!this.audioEnabled || !this.audioContext) return;
+            
+            const oscillator = this.audioContext.createOscillator();
+            const gainNode = this.audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(this.audioContext.destination);
+            
+            oscillator.frequency.setValueAtTime(frequency, this.audioContext.currentTime);
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
+            gainNode.gain.linearRampToValueAtTime(volume, this.audioContext.currentTime + 0.01);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + duration);
+            
+            oscillator.start(this.audioContext.currentTime);
+            oscillator.stop(this.audioContext.currentTime + duration);
+        };
+    }
+
+    createNoise(volume, duration) {
+        return () => {
+            if (!this.audioEnabled || !this.audioContext) return;
+            
+            const bufferSize = this.audioContext.sampleRate * duration;
+            const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+            const output = buffer.getChannelData(0);
+            
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = Math.random() * 2 - 1;
+            }
+            
+            const source = this.audioContext.createBufferSource();
+            const gainNode = this.audioContext.createGain();
+            
+            source.buffer = buffer;
+            source.connect(gainNode);
+            gainNode.connect(this.audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + duration);
+            
+            source.start(this.audioContext.currentTime);
+        };
+    }
+
+    async createPortfolio() {
+        this.createBackgroundParticles();
+        this.loadingBrain.updateProgress(0.5);
+        
+        await this.createCentralBrain(); // Wait for central brain
+        this.loadingBrain.updateProgress(0.65);
+        
+        await this.createGameBrains(); // Wait for brain models to load
+        this.loadingBrain.updateProgress(0.75);
+        
+        this.createElectricalConnections();
+        this.createFloatingElements();
+        this.createInteractiveRings();
+        this.createMagicalOrbs();
+    }
+
+    createBackgroundParticles() {
+        const particleCount = 1000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+        
+        for (let i = 0; i < particleCount * 3; i += 3) {
+            // Create particles in a spherical distribution
+            positions[i] = (Math.random() - 0.5) * 200;
+            positions[i + 1] = (Math.random() - 0.5) * 200;
+            positions[i + 2] = (Math.random() - 0.5) * 200;
+            
+            // Mix of white and yellow particles
+            const isYellow = Math.random() > 0.7;
+            colors[i] = isYellow ? 1 : 1;
+            colors[i + 1] = isYellow ? 1 : 1;
+            colors[i + 2] = isYellow ? 0 : 1;
+        }
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        const material = new THREE.PointsMaterial({
+            size: 0.5,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending
+        });
+        
+        this.backgroundParticles = new THREE.Points(geometry, material);
+        this.scene.add(this.backgroundParticles);
+    }
+
+    async createGameBrains() {
+        this.updateLoadingStatus('Building Game Neural Nodes...');
+        
+        // Load the FBX brain model first
+        let brainModel = null;
+        try {
+            const fbxBrain = await this.fbxLoader.loadAsync('./BRAIN.fbx');
+            brainModel = fbxBrain;
+            console.log('FBX brain model loaded successfully');
+            this.updateLoadingStatus('Cloning Brain Networks...');
+        } catch (error) {
+            console.log('Could not load FBX brain model:', error);
+            this.updateLoadingStatus('Using Neural Backup Systems...');
+            return;
+        }
+
+        this.games.forEach((gameData, index) => {
+            // Create brain group for each game
+            const brainGroup = new THREE.Group();
+            brainGroup.position.set(gameData.position.x, gameData.position.y, gameData.position.z);
+            
+            // Clone the loaded FBX brain model
+            const clonedBrain = brainModel.clone();
+            
+            // Scale the brain to appropriate size (increased from 0.05 to match original circle size)
+            clonedBrain.scale.setScalar(0.15);
+            
+            // Make the brain as glowing yellow wireframe outline with hollow effect
+            clonedBrain.traverse((child) => {
+                if (child.isMesh) {
+                    // Remove any existing materials and create new wireframe material
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: 0xffff00, // Bright yellow
+                        wireframe: true, // Wireframe outline
+                        transparent: true,
+                        opacity: 0.4, // Reduced opacity for hollow effect
+                        emissive: 0xffff00, // Yellow glow
+                        emissiveIntensity: 0.2
+                    });
+                    
+                    // Create a dark outline by adding a second mesh with line material
+                    const outlineGeometry = child.geometry.clone();
+                    const outlineMaterial = new THREE.LineBasicMaterial({
+                        color: 0x000000, // Dark outline
+                        transparent: true,
+                        opacity: 0.8,
+                        linewidth: 2
+                    });
+                    
+                    // Create wireframe from geometry
+                    const wireframeGeometry = new THREE.WireframeGeometry(outlineGeometry);
+                    const outline = new THREE.LineSegments(wireframeGeometry, outlineMaterial);
+                    child.add(outline);
+                    
+                    child.castShadow = false;
+                    child.receiveShadow = false;
+                }
+            });
+            
+            brainGroup.add(clonedBrain);
+            
+            // Add floating particles around brain
+            this.createBrainParticles(brainGroup, gameData.color);
+            
+            // Store game data
+            brainGroup.userData = gameData;
+            brainGroup.userData.originalPosition = brainGroup.position.clone();
+            brainGroup.userData.mainBrain = clonedBrain;
+            
+            // Add floating animation
+            const floatOffset = Math.random() * Math.PI * 2;
+            brainGroup.userData.floatOffset = floatOffset;
+            
+            this.gameBrains.push(brainGroup);
+            this.scene.add(brainGroup);
+            
+            // Update loading progress
+            this.updateLoadingStatus(`Creating brain ${index + 1} of ${this.games.length}...`);
+        });
+        
+        this.updateLoadingStatus('Brain models created successfully!');
+    }
+
+    createBrainParticles(brain, color) {
+        const particleCount = 50;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        
+        for (let i = 0; i < particleCount * 3; i += 3) {
+            const radius = 3 + Math.random() * 2;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.random() * Math.PI;
+            
+            positions[i] = radius * Math.sin(phi) * Math.cos(theta);
+            positions[i + 1] = radius * Math.sin(phi) * Math.sin(theta);
+            positions[i + 2] = radius * Math.cos(phi);
+        }
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        
+        const material = new THREE.PointsMaterial({
+            color: color,
+            size: 0.3,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const particles = new THREE.Points(geometry, material);
+        brain.add(particles);
+        brain.userData.particles = particles;
+    }
+
+    createBrainHemisphere(offsetX, side) {
+        // Create more realistic brain hemisphere shape
+        const hemisphereGeometry = new THREE.SphereGeometry(1.2, 24, 16);
+        
+        // Modify geometry to create brain-like surface
+        const positions = hemisphereGeometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+            const x = positions[i];
+            const y = positions[i + 1];
+            const z = positions[i + 2];
+            
+            // Create brain fold patterns (sulci and gyri)
+            const fold1 = Math.sin(x * 3) * Math.cos(y * 4) * 0.1;
+            const fold2 = Math.sin(z * 4) * Math.cos(x * 3) * 0.08;
+            const fold3 = Math.sin(y * 5) * Math.cos(z * 4) * 0.06;
+            
+            // Add surface irregularities
+            const noise = (Math.random() - 0.5) * 0.05;
+            
+            positions[i] += fold1 + noise;
+            positions[i + 1] += fold2 + noise;
+            positions[i + 2] += fold3 + noise;
+        }
+        
+        // Scale to brain proportions (wider than tall, longer front to back)
+        hemisphereGeometry.scale(1.2, 0.9, 1.4);
+        hemisphereGeometry.computeVertexNormals();
+        
+        const hemisphere = new THREE.Mesh(hemisphereGeometry);
+        hemisphere.position.x = offsetX;
+        
+        return hemisphere;
+    }
+
+    addBrainFolds(brainGroup) {
+        // Add realistic brain surface folds (sulci)
+        for (let i = 0; i < 6; i++) {
+            const foldCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(
+                    (Math.random() - 0.5) * 2,
+                    1 + (Math.random() - 0.5) * 0.5,
+                    (Math.random() - 0.5) * 2
+                ),
+                new THREE.Vector3(
+                    (Math.random() - 0.5) * 2,
+                    0.5 + (Math.random() - 0.5) * 0.5,
+                    (Math.random() - 0.5) * 2
+                ),
+                new THREE.Vector3(
+                    (Math.random() - 0.5) * 2,
+                    0 + (Math.random() - 0.5) * 0.5,
+                    (Math.random() - 0.5) * 2
+                ),
+                new THREE.Vector3(
+                    (Math.random() - 0.5) * 2,
+                    -0.5 + (Math.random() - 0.5) * 0.5,
+                    (Math.random() - 0.5) * 2
+                )
+            ]);
+            
+            const points = foldCurve.getPoints(20);
+            const foldGeometry = new THREE.BufferGeometry().setFromPoints(points);
+            const foldMaterial = new THREE.LineBasicMaterial({
+                color: 0x884444,
+                transparent: true,
+                opacity: 0.4,
+                linewidth: 2
+            });
+            
+            const fold = new THREE.Line(foldGeometry, foldMaterial);
+            brainGroup.add(fold);
+        }
+    }
+
+    createFloatingElements() {
+        // Create subtle geometric shapes floating in background
+        for (let i = 0; i < 30; i++) {
+            const shapes = [
+                new THREE.TetrahedronGeometry(0.5),
+                new THREE.OctahedronGeometry(0.4),
+                new THREE.IcosahedronGeometry(0.3),
+                new THREE.DodecahedronGeometry(0.35)
+            ];
+            
+            const geometry = shapes[Math.floor(Math.random() * shapes.length)];
+            const material = new THREE.MeshBasicMaterial({
+                color: Math.random() > 0.5 ? 0xffffff : 0xffff00,
+                transparent: true,
+                opacity: 0.15,
+                wireframe: true
+            });
+            
+            const shape = new THREE.Mesh(geometry, material);
+            shape.position.set(
+                (Math.random() - 0.5) * 150,
+                (Math.random() - 0.5) * 100,
+                (Math.random() - 0.5) * 150
+            );
+            
+            shape.userData = {
+                rotationSpeed: {
+                    x: (Math.random() - 0.5) * 0.02,
+                    y: (Math.random() - 0.5) * 0.02,
+                    z: (Math.random() - 0.5) * 0.02
+                },
+                originalOpacity: shape.material.opacity,
+                pulseSpeed: 0.5 + Math.random() * 1.5
+            };
+            
+            this.interactiveElements.push(shape);
+            this.scene.add(shape);
+        }
+    }
+
+    createInteractiveRings() {
+        for (let i = 0; i < 5; i++) {
+            const ringGeometry = new THREE.RingGeometry(8 + i * 3, 8.5 + i * 3, 32);
+            const ringMaterial = new THREE.MeshBasicMaterial({
+                color: i % 2 === 0 ? 0xffff00 : 0xffffff,
+                transparent: true,
+                opacity: 0.1,
+                side: THREE.DoubleSide
+            });
+            
+            const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+            ring.rotation.x = Math.PI / 2;
+            ring.position.y = -15;
+            
+            ring.userData = {
+                rotationSpeed: 0.002 + i * 0.001,
+                pulsePhase: i * Math.PI / 3,
+                originalOpacity: ring.material.opacity
+            };
+            
+            this.interactiveElements.push(ring);
+            this.scene.add(ring);
+        }
+    }
+
+    createMagicalOrbs() {
+        for (let i = 0; i < 8; i++) {
+            const orbGeometry = new THREE.SphereGeometry(0.2, 16, 16);
+            const orbMaterial = new THREE.MeshBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.8,
+                emissive: 0xffff00,
+                emissiveIntensity: 0.5
+            });
+            
+            const orb = new THREE.Mesh(orbGeometry, orbMaterial);
+            const radius = 25 + Math.random() * 15;
+            const angle = (i / 8) * Math.PI * 2;
+            
+            orb.position.set(
+                Math.cos(angle) * radius,
+                (Math.random() - 0.5) * 20,
+                Math.sin(angle) * radius
+            );
+            
+            orb.userData = {
+                orbitRadius: radius,
+                orbitSpeed: 0.01 + Math.random() * 0.01,
+                orbitAngle: angle,
+                floatSpeed: 0.5 + Math.random() * 0.5,
+                floatPhase: Math.random() * Math.PI * 2
+            };
+            
+            this.interactiveElements.push(orb);
+            this.scene.add(orb);
+        }
+    }
+
+    async createCentralBrain() {
+        // Load the FBX brain model for central brain
+        await this.loadCentralBrainModel();
+        
+        // Ensure camera can see the brain
+        console.log('Setting up camera to view central brain...');
+        this.camera.position.set(0, 0, 30);
+        this.controls.target.set(0, 0, 0);
+        this.controls.update();
+        
+        // Debug the central brain
+        if (this.centralBrain) {
+            console.log('Central brain loaded successfully');
+            console.log('Central brain position:', this.centralBrain.position);
+            console.log('Central brain scale:', this.centralBrain.scale);
+            console.log('Central brain children:', this.centralBrain.children.length);
+            console.log('Central brain visible:', this.centralBrain.visible);
+        } else {
+            console.error('Central brain failed to load!');
+        }
+    }
+
+    async loadCentralBrainModel() {
+        this.updateLoadingStatus('Constructing Central Brain...');
+        
+        const brainGroup = new THREE.Group();
+        
+        try {
+            // Load FBX brain model from root directory
+            const fbxBrain = await this.fbxLoader.loadAsync('./BRAIN.fbx');
+            const brainModel = fbxBrain;
+            
+            // Scale the central brain larger (increased from 0.12 to 0.3)
+            brainModel.scale.setScalar(0.3);
+            
+            // Make the central brain as glowing yellow wireframe with hollow effect
+            brainModel.traverse((child) => {
+                if (child.isMesh) {
+                    // Remove existing materials and create glowing wireframe
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: 0xffff00, // Bright yellow
+                        wireframe: true, // Wireframe outline
+                        transparent: true,
+                        opacity: 0.5, // Reduced opacity for hollow effect
+                        emissive: 0xffff00, // Yellow glow
+                        emissiveIntensity: 0.3
+                    });
+                    
+                    // Create a dark outline
+                    const outlineGeometry = child.geometry.clone();
+                    const outlineMaterial = new THREE.LineBasicMaterial({
+                        color: 0x000000, // Dark outline
+                        transparent: true,
+                        opacity: 0.9,
+                        linewidth: 3
+                    });
+                    
+                    const wireframeGeometry = new THREE.WireframeGeometry(outlineGeometry);
+                    const outline = new THREE.LineSegments(wireframeGeometry, outlineMaterial);
+                    child.add(outline);
+                    
+                    child.castShadow = false;
+                    child.receiveShadow = false;
+                }
+            });
+            
+            brainGroup.add(brainModel);
+            
+            // Add energy core to loaded model
+            this.createEnergyCore(brainGroup);
+            
+            console.log('Central FBX brain model loaded successfully');
+            this.updateLoadingStatus('Neural Core Initialized!');
+            
+        } catch (error) {
+            console.log('External brain model not found, creating procedural brain');
+            this.updateLoadingStatus('Generating Procedural Brain...');
+            this.createProceduralBrain(brainGroup);
+        }
+        
+        // Position the brain at center
+        brainGroup.position.set(0, 0, 0);
+        
+        this.centralBrain = brainGroup;
+        this.scene.add(brainGroup);
+        
+        console.log('Central brain model added to scene');
+        console.log('Central brain children count:', brainGroup.children.length);
+        console.log('Central brain position:', brainGroup.position);
+        console.log('Central brain scale:', brainGroup.scale);
+    }
+
+    createProceduralBrain(brainGroup) {
+        // Create a more realistic central brain
+        this.createRealisticBrainShape(brainGroup);
+        
+        // Create a sleek wireframe brain outline that looks professional
+        this.createBrainOutline(brainGroup);
+        
+        // Add glowing neural nodes
+        this.createNeuralNodes(brainGroup);
+        
+        // Add energy core
+        this.createEnergyCore(brainGroup);
+        
+        // Scale appropriately
+        brainGroup.scale.setScalar(1.5);
+    }
+
+    createRealisticBrainShape(brainGroup) {
+        // Create left and right hemispheres with realistic proportions
+        const leftHemisphere = this.createDetailedHemisphere(-1, 'left');
+        const rightHemisphere = this.createDetailedHemisphere(1, 'right');
+        
+        brainGroup.add(leftHemisphere);
+        brainGroup.add(rightHemisphere);
+        
+        // Add brain stem
+        const stemGeometry = new THREE.CylinderGeometry(0.4, 0.6, 1.5, 12);
+        const stemMaterial = new THREE.MeshPhongMaterial({
+            color: 0xbb7777,
+            transparent: true,
+            opacity: 0.8,
+            emissive: 0x441122,
+            emissiveIntensity: 0.2
+        });
+        const brainStem = new THREE.Mesh(stemGeometry, stemMaterial);
+        brainStem.position.set(0, -2, -0.5);
+        brainGroup.add(brainStem);
+        
+        // Add cerebellum
+        const cerebellumGeometry = new THREE.SphereGeometry(1, 16, 12);
+        cerebellumGeometry.scale(1, 0.6, 1.2);
+        
+        // Add cerebellum folding texture
+        const cerebellumPositions = cerebellumGeometry.attributes.position.array;
+        for (let i = 0; i < cerebellumPositions.length; i += 3) {
+            const x = cerebellumPositions[i];
+            const z = cerebellumPositions[i + 2];
+            const folds = Math.sin(x * 10) * Math.sin(z * 10) * 0.05;
+            cerebellumPositions[i + 1] += folds;
+        }
+        cerebellumGeometry.computeVertexNormals();
+        
+        const cerebellumMaterial = new THREE.MeshPhongMaterial({
+            color: 0xaa6666,
+            transparent: true,
+            opacity: 0.85,
+            emissive: 0x331111,
+            emissiveIntensity: 0.15
+        });
+        const cerebellum = new THREE.Mesh(cerebellumGeometry, cerebellumMaterial);
+        cerebellum.position.set(0, -1.2, -2.5);
+        brainGroup.add(cerebellum);
+        
+        console.log('Realistic Brain Shape Created');
+    }
+
+    createDetailedHemisphere(offsetX, side) {
+        const hemisphereGeometry = new THREE.SphereGeometry(2, 32, 24);
+        
+        // Create realistic brain surface with sulci and gyri
+        const positions = hemisphereGeometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+            const x = positions[i];
+            const y = positions[i + 1];
+            const z = positions[i + 2];
+            
+            // Major brain folds (sulci)
+            const centralSulcus = Math.sin(x * 2) * Math.cos(z * 1.5) * 0.15;
+            const sylvianFissure = Math.sin(y * 1.5) * Math.cos(x * 2) * 0.12;
+            const longitudinalFissure = Math.sin(z * 3) * Math.cos(y * 2) * 0.08;
+            
+            // Fine surface texture (gyri)
+            const fineTexture = Math.sin(x * 8) * Math.sin(y * 8) * Math.sin(z * 8) * 0.03;
+            
+            positions[i] += centralSulcus + fineTexture;
+            positions[i + 1] += sylvianFissure + fineTexture;
+            positions[i + 2] += longitudinalFissure + fineTexture;
+        }
+        
+        // Scale to proper brain proportions
+        hemisphereGeometry.scale(1.3, 1, 1.6); // Wider, flatter, longer
+        hemisphereGeometry.computeVertexNormals();
+        
+        const hemisphereMaterial = new THREE.MeshPhongMaterial({
+            color: 0xcc9999,
+            transparent: true,
+            opacity: 0.9,
+            emissive: 0x441122,
+            emissiveIntensity: 0.2,
+            shininess: 30
+        });
+        
+        const hemisphere = new THREE.Mesh(hemisphereGeometry, hemisphereMaterial);
+        hemisphere.position.x = offsetX;
+        
+        return hemisphere;
+    }
+
+    createBrainWireframeOutline(brainGroup) {
+        // Create brain outline using lines and curves - wireframe style
+        const brainOutlineGroup = new THREE.Group();
+        
+        // Main brain hemisphere outlines
+        const leftHemisphere = this.createHemisphereWireframe(-1.5, 0x00ffff);
+        const rightHemisphere = this.createHemisphereWireframe(1.5, 0x00ffff);
+        
+        brainOutlineGroup.add(leftHemisphere);
+        brainOutlineGroup.add(rightHemisphere);
+        
+        // Cerebellum outline (back of brain)
+        const cerebellumOutline = this.createCerebellumWireframe();
+        brainOutlineGroup.add(cerebellumOutline);
+        
+        // Brain stem outline
+        const brainStemOutline = this.createBrainStemWireframe();
+        brainOutlineGroup.add(brainStemOutline);
+        
+        // Frontal lobe divisions
+        const frontalDivisions = this.createFrontalLobeWireframe();
+        brainOutlineGroup.add(frontalDivisions);
+        
+        brainGroup.add(brainOutlineGroup);
+        
+        // Add subtle pulsing animation
+        brainOutlineGroup.userData.animationType = 'pulse';
+    }
+
+    createHemisphereWireframe(offsetX, color) {
+        const hemisphereGroup = new THREE.Group();
+        
+        // Create brain outline curves
+        const outlineCurves = [
+            // Top curve
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(offsetX - 1.5, 1.8, 1.2),
+                new THREE.Vector3(offsetX - 0.8, 2.2, 0.5),
+                new THREE.Vector3(offsetX + 0.8, 2.2, 0.5),
+                new THREE.Vector3(offsetX + 1.5, 1.8, 1.2)
+            ]),
+            // Side curve
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(offsetX + 1.5, 1.8, 1.2),
+                new THREE.Vector3(offsetX + 2.0, 0.5, 0.8),
+                new THREE.Vector3(offsetX + 1.8, -0.8, 0.2),
+                new THREE.Vector3(offsetX + 1.2, -1.5, -0.5)
+            ]),
+            // Bottom curve
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(offsetX + 1.2, -1.5, -0.5),
+                new THREE.Vector3(offsetX + 0.3, -1.8, -0.8),
+                new THREE.Vector3(offsetX - 0.3, -1.8, -0.8),
+                new THREE.Vector3(offsetX - 1.2, -1.5, -0.5)
+            ]),
+            // Back curve
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(offsetX - 1.2, -1.5, -0.5),
+                new THREE.Vector3(offsetX - 1.8, -0.8, 0.2),
+                new THREE.Vector3(offsetX - 2.0, 0.5, 0.8),
+                new THREE.Vector3(offsetX - 1.5, 1.8, 1.2)
+            ])
+        ];
+        
+        // Create lines from curves
+        outlineCurves.forEach((curve, index) => {
+            const points = curve.getPoints(50);
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0.8,
+                linewidth: 2
+            });
+            
+            const line = new THREE.Line(geometry, material);
+            line.userData = {
+                originalColor: color,
+                animationOffset: index * 0.3
+            };
+            hemisphereGroup.add(line);
+        });
+        
+        // Add brain folds (sulci) as additional wireframe details
+        for (let i = 0; i < 6; i++) {
+            const foldCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(offsetX + (Math.random() - 0.5) * 2, 1.5 + (Math.random() - 0.5) * 1, 0.8 + (Math.random() - 0.5) * 0.8),
+                new THREE.Vector3(offsetX + (Math.random() - 0.5) * 2, 0.5 + (Math.random() - 0.5) * 1, 0.3 + (Math.random() - 0.5) * 0.8),
+                new THREE.Vector3(offsetX + (Math.random() - 0.5) * 2, -0.5 + (Math.random() - 0.5) * 1, -0.2 + (Math.random() - 0.5) * 0.8),
+                new THREE.Vector3(offsetX + (Math.random() - 0.5) * 2, -1.5 + (Math.random() - 0.5) * 1, -0.7 + (Math.random() - 0.5) * 0.8)
+            ]);
+            
+            const points = foldCurve.getPoints(30);
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0.4,
+                linewidth: 1
+            });
+            
+            const fold = new THREE.Line(geometry, material);
+            fold.userData = {
+                originalColor: color,
+                animationOffset: i * 0.5,
+                isFold: true
+            };
+            hemisphereGroup.add(fold);
+        }
+        
+        return hemisphereGroup;
+    }
+
+    createCerebellumWireframe() {
+        const cerebellumGroup = new THREE.Group();
+        
+        // Cerebellum characteristic folded structure as wireframe
+        for (let i = 0; i < 12; i++) {
+            const angle = (i / 12) * Math.PI * 2;
+            const radius = 0.8 + Math.sin(i * 2) * 0.2;
+            
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(Math.cos(angle) * radius, -2.0, Math.sin(angle) * radius - 1.8),
+                new THREE.Vector3(Math.cos(angle + 0.3) * (radius + 0.2), -1.8, Math.sin(angle + 0.3) * (radius + 0.2) - 1.8),
+                new THREE.Vector3(Math.cos(angle + 0.6) * radius, -1.6, Math.sin(angle + 0.6) * radius - 1.8),
+                new THREE.Vector3(Math.cos(angle + 0.9) * (radius - 0.1), -1.9, Math.sin(angle + 0.9) * (radius - 0.1) - 1.8)
+            ]);
+            
+            const points = curve.getPoints(40);
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.6,
+                linewidth: 1.5
+            });
+            
+            const line = new THREE.Line(geometry, material);
+            line.userData = {
+                originalColor: 0xffff00,
+                animationOffset: i * 0.2
+            };
+            cerebellumGroup.add(line);
+        }
+        
+        return cerebellumGroup;
+    }
+
+    createBrainStemWireframe() {
+        const stemGroup = new THREE.Group();
+        
+        // Brain stem as elegant connecting wireframe lines
+        const stemCurves = [
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(-0.2, -1.6, -0.2),
+                new THREE.Vector3(-0.15, -2.2, -0.3),
+                new THREE.Vector3(-0.1, -2.8, -0.2),
+                new THREE.Vector3(0, -3.2, 0)
+            ]),
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0.2, -1.6, -0.2),
+                new THREE.Vector3(0.15, -2.2, -0.3),
+                new THREE.Vector3(0.1, -2.8, -0.2),
+                new THREE.Vector3(0, -3.2, 0)
+            ]),
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, -1.6, 0.2),
+                new THREE.Vector3(0, -2.2, 0.1),
+                new THREE.Vector3(0, -2.8, 0.05),
+                new THREE.Vector3(0, -3.2, 0)
+            ])
+        ];
+        
+        stemCurves.forEach((curve, index) => {
+            const points = curve.getPoints(40);
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.7,
+                linewidth: 2
+            });
+            
+            const line = new THREE.Line(geometry, material);
+            line.userData = {
+                originalColor: 0xffffff,
+                animationOffset: index * 0.4
+            };
+            stemGroup.add(line);
+        });
+        
+        return stemGroup;
+    }
+
+    createFrontalLobeWireframe() {
+        const frontalGroup = new THREE.Group();
+        
+        // Frontal lobe divisions as wireframe
+        const divisions = [
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(-1.0, 1.5, 1.5),
+                new THREE.Vector3(0, 1.8, 1.8),
+                new THREE.Vector3(1.0, 1.5, 1.5)
+            ]),
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(-0.8, 1.2, 1.2),
+                new THREE.Vector3(0, 1.4, 1.4),
+                new THREE.Vector3(0.8, 1.2, 1.2)
+            ])
+        ];
+        
+        divisions.forEach((curve, index) => {
+            const points = curve.getPoints(30);
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({
+                color: 0x00ffff,
+                transparent: true,
+                opacity: 0.5,
+                linewidth: 1
+            });
+            
+            const line = new THREE.Line(geometry, material);
+            line.userData = {
+                originalColor: 0x00ffff,
+                animationOffset: index * 0.6
+            };
+            frontalGroup.add(line);
+        });
+        
+        return frontalGroup;
+    }
+
+    createNeuralPathways(brainGroup) {
+        // Create neural pathways connecting different brain regions
+        const pathwayGroup = new THREE.Group();
+        
+        // Define key brain regions
+        const regions = [
+            { pos: new THREE.Vector3(-1.5, 1.5, 0.8), name: 'frontal' },
+            { pos: new THREE.Vector3(1.5, 1.5, 0.8), name: 'frontal_r' },
+            { pos: new THREE.Vector3(-2.0, 0, 0), name: 'temporal' },
+            { pos: new THREE.Vector3(2.0, 0, 0), name: 'temporal_r' },
+            { pos: new THREE.Vector3(0, 1.8, -0.5), name: 'parietal' },
+            { pos: new THREE.Vector3(0, -0.8, -1.5), name: 'occipital' },
+            { pos: new THREE.Vector3(0, -1.8, -1.8), name: 'cerebellum' }
+        ];
+        
+        // Create pathways between regions
+        for (let i = 0; i < regions.length; i++) {
+            for (let j = i + 1; j < regions.length; j++) {
+                if (Math.random() > 0.6) { // Only create some connections
+                    const curve = new THREE.CatmullRomCurve3([
+                        regions[i].pos,
+                        new THREE.Vector3(
+                            (regions[i].pos.x + regions[j].pos.x) / 2 + (Math.random() - 0.5) * 1,
+                            (regions[i].pos.y + regions[j].pos.y) / 2 + (Math.random() - 0.5) * 1,
+                            (regions[i].pos.z + regions[j].pos.z) / 2 + (Math.random() - 0.5) * 1
+                        ),
+                        regions[j].pos
+                    ]);
+                    
+                    const points = curve.getPoints(30);
+                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    const material = new THREE.LineBasicMaterial({
+                        color: 0xffff00,
+                        transparent: true,
+                        opacity: 0.3,
+                        linewidth: 1
+                    });
+                    
+                    const pathway = new THREE.Line(geometry, material);
+                    pathway.userData = {
+                        originalColor: 0xffff00,
+                        animationOffset: (i + j) * 0.3,
+                        isPathway: true
+                    };
+                    pathwayGroup.add(pathway);
+                }
+            }
+        }
+        
+        brainGroup.add(pathwayGroup);
+    }
+
+    createBrainNodes(brainGroup) {
+        // Create glowing nodes at key brain regions
+        const nodePositions = [
+            { pos: [-1.5, 1.5, 0.8], color: 0xffff00, size: 0.08 },   // Left frontal
+            { pos: [1.5, 1.5, 0.8], color: 0xffff00, size: 0.08 },    // Right frontal
+            { pos: [-2.0, 0, 0], color: 0x00ffff, size: 0.06 },       // Left temporal
+            { pos: [2.0, 0, 0], color: 0x00ffff, size: 0.06 },        // Right temporal
+            { pos: [0, 1.8, -0.5], color: 0xffffff, size: 0.07 },     // Parietal
+            { pos: [0, -0.8, -1.5], color: 0x00ffff, size: 0.06 },    // Occipital
+            { pos: [0, -1.8, -1.8], color: 0xffff00, size: 0.05 },    // Cerebellum
+            { pos: [0, 0, 0], color: 0xffffff, size: 0.1 }             // Central core
+        ];
+        
+        nodePositions.forEach((nodeData, index) => {
+            const geometry = new THREE.SphereGeometry(nodeData.size, 8, 6);
+            const material = new THREE.MeshBasicMaterial({
+                color: nodeData.color,
+                emissive: nodeData.color,
+                emissiveIntensity: 0.8,
+                transparent: true,
+                opacity: 0.9
+            });
+            
+            const node = new THREE.Mesh(geometry, material);
+            node.position.set(nodeData.pos[0], nodeData.pos[1], nodeData.pos[2]);
+            node.userData = {
+                originalColor: nodeData.color,
+                animationOffset: index * 0.4,
+                baseScale: 1,
+                isNode: true
+            };
+            
+            brainGroup.add(node);
+        });
+    }
+
+    createBrainOutline(brainGroup) {
+        // Create the main brain shape using clean geometric curves
+        const brainOutline = new THREE.Group();
+        
+        // Wireframe material with neural glow
+        const wireframeMaterial = new THREE.LineBasicMaterial({
+            color: 0x00ccff,
+            transparent: true,
+            opacity: 0.8,
+            linewidth: 2
+        });
+        
+        // Create brain profile curves
+        const brainCurves = this.generateBrainCurves();
+        
+        brainCurves.forEach((curve, index) => {
+            const points = curve.getPoints(100);
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const line = new THREE.Line(geometry, wireframeMaterial.clone());
+            
+            // Add subtle animation offset for each curve
+            line.userData = {
+                animationOffset: index * 0.2,
+                originalColor: 0x00ccff
+            };
+            
+            brainOutline.add(line);
+        });
+        
+        // Add cerebellum outline
+        this.addCerebellumOutline(brainOutline, wireframeMaterial);
+        
+        // Add brain stem outline
+        this.addBrainStemOutline(brainOutline, wireframeMaterial);
+        
+        brainGroup.add(brainOutline);
+        brainGroup.userData.outline = brainOutline;
+        
+        // Add pulsing animation
+        this.animateBrainOutline(brainOutline);
+    }
+
+    generateBrainCurves() {
+        const curves = [];
+        
+        // Main brain outline (top view)
+        const topCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(-2.5, 1.5, 1.5),
+            new THREE.Vector3(-1.8, 2.2, 0.8),
+            new THREE.Vector3(0, 2.5, 0.5),
+            new THREE.Vector3(1.8, 2.2, 0.8),
+            new THREE.Vector3(2.5, 1.5, 1.5),
+            new THREE.Vector3(2.2, 0.5, 2),
+            new THREE.Vector3(1.5, -0.5, 1.8),
+            new THREE.Vector3(0, -1, 1.5),
+            new THREE.Vector3(-1.5, -0.5, 1.8),
+            new THREE.Vector3(-2.2, 0.5, 2),
+            new THREE.Vector3(-2.5, 1.5, 1.5)
+        ], true);
+        
+        // Side brain outline (left hemisphere)
+        const leftSideCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(-2.5, 1.5, 1.5),
+            new THREE.Vector3(-2.8, 1, 0),
+            new THREE.Vector3(-2.5, 0, -1.5),
+            new THREE.Vector3(-2, -1, -2),
+            new THREE.Vector3(-1, -1.5, -1.8),
+            new THREE.Vector3(0, -1.8, -1.5),
+            new THREE.Vector3(1, -1.5, -1.8),
+            new THREE.Vector3(2, -1, -2),
+            new THREE.Vector3(2.5, 0, -1.5),
+            new THREE.Vector3(2.8, 1, 0),
+            new THREE.Vector3(2.5, 1.5, 1.5)
+        ]);
+        
+        // Frontal lobe outline
+        const frontalCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(-1.5, 2, 2),
+            new THREE.Vector3(0, 2.3, 2.2),
+            new THREE.Vector3(1.5, 2, 2),
+            new THREE.Vector3(1.8, 1.5, 1.5),
+            new THREE.Vector3(1.5, 1, 1),
+            new THREE.Vector3(0, 0.8, 0.8),
+            new THREE.Vector3(-1.5, 1, 1),
+            new THREE.Vector3(-1.8, 1.5, 1.5),
+            new THREE.Vector3(-1.5, 2, 2)
+        ], true);
+        
+        // Temporal lobe curves
+        const leftTemporalCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(-2.8, 1, 0),
+            new THREE.Vector3(-3, 0, 0.5),
+            new THREE.Vector3(-2.8, -0.8, 1),
+            new THREE.Vector3(-2.2, -1.2, 0.8),
+            new THREE.Vector3(-1.8, -0.8, 0.5),
+            new THREE.Vector3(-2, 0, 0),
+            new THREE.Vector3(-2.5, 0.8, -0.2),
+            new THREE.Vector3(-2.8, 1, 0)
+        ], true);
+        
+        const rightTemporalCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(2.8, 1, 0),
+            new THREE.Vector3(3, 0, 0.5),
+            new THREE.Vector3(2.8, -0.8, 1),
+            new THREE.Vector3(2.2, -1.2, 0.8),
+            new THREE.Vector3(1.8, -0.8, 0.5),
+            new THREE.Vector3(2, 0, 0),
+            new THREE.Vector3(2.5, 0.8, -0.2),
+            new THREE.Vector3(2.8, 1, 0)
+        ], true);
+        
+        curves.push(topCurve, leftSideCurve, frontalCurve, leftTemporalCurve, rightTemporalCurve);
+        return curves;
+    }
+
+    addCerebellumOutline(brainOutline, material) {
+        // Create cerebellum as segmented lines
+        const cerebellumCurves = [];
+        
+        for (let i = 0; i < 8; i++) {
+            const angle = (i / 8) * Math.PI * 2;
+            const radius = 1 + Math.sin(i * 2) * 0.2;
+            
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(Math.cos(angle) * radius, -2.5, Math.sin(angle) * radius - 1.5),
+                new THREE.Vector3(Math.cos(angle + 0.5) * (radius + 0.3), -2.2, Math.sin(angle + 0.5) * (radius + 0.3) - 1.5),
+                new THREE.Vector3(Math.cos(angle + 1) * radius, -2, Math.sin(angle + 1) * radius - 1.5),
+                new THREE.Vector3(Math.cos(angle + 1.5) * (radius - 0.2), -2.3, Math.sin(angle + 1.5) * (radius - 0.2) - 1.5)
+            ]);
+            
+            const points = curve.getPoints(50);
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const line = new THREE.Line(geometry, material.clone());
+            line.material.color.setHex(0x0099dd);
+            
+            brainOutline.add(line);
+        }
+    }
+
+    addBrainStemOutline(brainOutline, material) {
+        // Brain stem as elegant connecting lines
+        const stemCurves = [
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(-0.3, -1.8, 0),
+                new THREE.Vector3(-0.2, -2.5, -0.2),
+                new THREE.Vector3(-0.1, -3.2, -0.1),
+                new THREE.Vector3(0, -3.8, 0)
+            ]),
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0.3, -1.8, 0),
+                new THREE.Vector3(0.2, -2.5, -0.2),
+                new THREE.Vector3(0.1, -3.2, -0.1),
+                new THREE.Vector3(0, -3.8, 0)
+            ]),
+            new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, -1.8, 0.3),
+                new THREE.Vector3(0, -2.5, 0.2),
+                new THREE.Vector3(0, -3.2, 0.1),
+                new THREE.Vector3(0, -3.8, 0)
+            ])
+        ];
+        
+        stemCurves.forEach(curve => {
+            const points = curve.getPoints(30);
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const line = new THREE.Line(geometry, material.clone());
+            line.material.color.setHex(0x0066aa);
+            
+            brainOutline.add(line);
+        });
+    }
+
+    createNeuralNodes(brainGroup) {
+        const nodeGeometry = new THREE.SphereGeometry(0.08, 8, 6);
+        const nodeMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffff00,
+            emissive: 0xffff00,
+            emissiveIntensity: 1,
+            transparent: true,
+            opacity: 0.9
+        });
+        
+        // Strategic node placement for neural network effect
+        const nodePositions = [
+            [0, 2.5, 0.5],      // Top center
+            [-1.8, 1.5, 1],     // Left frontal
+            [1.8, 1.5, 1],      // Right frontal
+            [-2.5, 0, 0],       // Left temporal
+            [2.5, 0, 0],        // Right temporal
+            [0, 0, -2],         // Occipital
+            [-1, -2.2, -1.5],   // Left cerebellum
+            [1, -2.2, -1.5],    // Right cerebellum
+            [0, -3.5, 0],       // Brain stem base
+            [-1.5, 0.8, 0.5],   // Left parietal
+            [1.5, 0.8, 0.5],    // Right parietal
+            [0, -1, 1.5]        // Central
+        ];
+        
+        nodePositions.forEach((pos, index) => {
+            const node = new THREE.Mesh(nodeGeometry, nodeMaterial.clone());
+            node.position.set(pos[0], pos[1], pos[2]);
+            node.userData = {
+                animationOffset: index * 0.3,
+                baseScale: 1
+            };
+            
+            brainGroup.add(node);
+        });
+        
+        brainGroup.userData.nodes = brainGroup.children.filter(child => 
+            child.geometry && child.geometry.type === 'SphereGeometry'
+        );
+    }
+
+    animateBrainOutline(brainOutline) {
+        const animate = () => {
+            const time = Date.now() * 0.001;
+            
+            // Gentle rotation
+            brainOutline.rotation.y = Math.sin(time * 0.2) * 0.05;
+            brainOutline.rotation.x = Math.sin(time * 0.15) * 0.02;
+            
+            // Pulsing wireframe effect
+            brainOutline.children.forEach((child, index) => {
+                if (child.material && child.material.type === 'LineBasicMaterial') {
+                    const phase = time * 2 + index * 0.5;
+                    const intensity = 0.5 + Math.sin(phase) * 0.3;
+                    child.material.opacity = intensity;
+                    
+                    // Color shifting
+                    const hue = (Math.sin(time * 0.5 + index * 0.2) * 0.1 + 0.55) % 1;
+                    child.material.color.setHSL(hue, 0.8, 0.6);
+                }
+            });
+        };
+        
+        this.animations.push(animate);
+    }
+
+    createBrainHemisphere(brainGroup, offsetX, side) {
+        // Create hemisphere base
+        const hemisphereGeometry = new THREE.SphereGeometry(2.5, 32, 16, 0, Math.PI);
+        
+        // Add realistic brain surface details
+        const positions = hemisphereGeometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+            const x = positions[i];
+            const y = positions[i + 1];
+            const z = positions[i + 2];
+            
+            // Create brain fold patterns (gyri and sulci)
+            const fold1 = Math.sin(x * 4) * Math.cos(y * 3) * 0.15;
+            const fold2 = Math.sin(z * 5) * Math.cos(x * 4) * 0.1;
+            const fold3 = Math.sin(y * 6) * Math.cos(z * 3) * 0.08;
+            
+            // Add surface texture
+            const surface = Math.sin(x * 8) * Math.sin(y * 8) * Math.sin(z * 8) * 0.05;
+            
+            positions[i] += fold1 + surface;
+            positions[i + 1] += fold2 + surface;
+            positions[i + 2] += fold3 + surface;
+        }
+        hemisphereGeometry.computeVertexNormals();
+        
+        const hemisphereMaterial = new THREE.MeshPhongMaterial({
+            color: 0xcc9999,
+            transparent: true,
+            opacity: 0.9,
+            emissive: 0x441122,
+            emissiveIntensity: 0.2,
+            shininess: 30,
+            bumpScale: 0.1
+        });
+        
+        const hemisphere = new THREE.Mesh(hemisphereGeometry, hemisphereMaterial);
+        hemisphere.position.x = offsetX;
+        hemisphere.rotation.y = side === 'right' ? Math.PI : 0;
+        
+        brainGroup.add(hemisphere);
+        
+        // Add cortex details
+        this.addCortexDetails(brainGroup, offsetX, side);
+        
+        return hemisphere;
+    }
+
+    addCortexDetails(brainGroup, offsetX, side) {
+        // Add visible brain folds (sulci)
+        for (let i = 0; i < 8; i++) {
+            const foldGeometry = new THREE.CylinderGeometry(0.03, 0.03, 3, 6);
+            const foldMaterial = new THREE.MeshBasicMaterial({
+                color: 0x886666,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            const fold = new THREE.Mesh(foldGeometry, foldMaterial);
+            fold.position.set(
+                offsetX + (Math.random() - 0.5) * 3,
+                (Math.random() - 0.5) * 3,
+                (Math.random() - 0.5) * 3
+            );
+            fold.rotation.set(
+                Math.random() * Math.PI,
+                Math.random() * Math.PI,
+                Math.random() * Math.PI
+            );
+            
+            brainGroup.add(fold);
+        }
+    }
+
+    createBrainStem(brainGroup) {
+        const stemGeometry = new THREE.CylinderGeometry(0.6, 0.8, 2.5, 12);
+        const stemMaterial = new THREE.MeshPhongMaterial({
+            color: 0xaa7777,
+            emissive: 0x332211,
+            emissiveIntensity: 0.3,
+            shininess: 50
+        });
+        
+        const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+        stem.position.set(0, -2.5, 0);
+        brainGroup.add(stem);
+        
+        return stem;
+    }
+
+    createCerebellum(brainGroup) {
+        const cerebellumGeometry = new THREE.SphereGeometry(1.2, 24, 12);
+        
+        // Add cerebellum's characteristic folded structure
+        const positions = cerebellumGeometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+            const x = positions[i];
+            const y = positions[i + 1];
+            const z = positions[i + 2];
+            
+            // Create fine parallel folds
+            const folds = Math.sin(x * 15) * Math.sin(z * 15) * 0.1;
+            positions[i + 1] += folds;
+        }
+        cerebellumGeometry.computeVertexNormals();
+        
+        const cerebellumMaterial = new THREE.MeshPhongMaterial({
+            color: 0xbb8888,
+            emissive: 0x221111,
+            emissiveIntensity: 0.25,
+            shininess: 40
+        });
+        
+        const cerebellum = new THREE.Mesh(cerebellumGeometry, cerebellumMaterial);
+        cerebellum.position.set(0, -1.5, -2);
+        brainGroup.add(cerebellum);
+        
+        return cerebellum;
+    }
+
+    createNeuralNetwork(brainGroup) {
+        // Create visible neural pathways
+        const pathways = [];
+        
+        for (let i = 0; i < 15; i++) {
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4),
+                new THREE.Vector3((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4),
+                new THREE.Vector3((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4),
+                new THREE.Vector3((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4)
+            ]);
+            
+            const points = curve.getPoints(50);
+            const pathGeometry = new THREE.BufferGeometry().setFromPoints(points);
+            const pathMaterial = new THREE.LineBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.3,
+                linewidth: 2
+            });
+            
+            const pathway = new THREE.Line(pathGeometry, pathMaterial);
+            pathway.userData = {
+                pulseOffset: Math.random() * Math.PI * 2,
+                originalOpacity: 0.3
+            };
+            
+            pathways.push(pathway);
+            brainGroup.add(pathway);
+        }
+        
+        brainGroup.userData.pathways = pathways;
+        return pathways;
+    }
+
+    createEnergyCore(brainGroup) {
+        // Central energy core
+        const coreGeometry = new THREE.SphereGeometry(0.5, 16, 16);
+        const coreMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.9,
+            emissive: 0xffffff,
+            emissiveIntensity: 2
+        });
+        
+        const core = new THREE.Mesh(coreGeometry, coreMaterial);
+        brainGroup.add(core);
+        
+        // Energy rings around core
+        for (let i = 0; i < 3; i++) {
+            const ringGeometry = new THREE.RingGeometry(0.8 + i * 0.3, 0.9 + i * 0.3, 16);
+            const ringMaterial = new THREE.MeshBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.4,
+                side: THREE.DoubleSide
+            });
+            
+            const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+            ring.rotation.set(
+                Math.random() * Math.PI,
+                Math.random() * Math.PI,
+                Math.random() * Math.PI
+            );
+            ring.userData = {
+                rotationSpeed: {
+                    x: (Math.random() - 0.5) * 0.02,
+                    y: (Math.random() - 0.5) * 0.02,
+                    z: (Math.random() - 0.5) * 0.02
+                }
+            };
+            
+            brainGroup.add(ring);
+        }
+        
+        brainGroup.userData.core = core;
+        brainGroup.userData.hemispheres = brainGroup.children.filter(child => 
+            child.geometry && child.geometry.type === 'SphereGeometry' && child !== core
+        );
+        
+        return core;
+    }
+
+    // Alternative method to load external brain model
+    async loadExternalBrainModel() {
+        try {
+            // Example for loading GLTF model
+            const gltf = await this.gltfLoader.loadAsync('/models/brain.gltf');
+            const brainModel = gltf.scene;
+            
+            // Adjust materials for our theme
+            brainModel.traverse((child) => {
+                if (child.isMesh) {
+                    child.material.emissive = new THREE.Color(0x441122);
+                    child.material.emissiveIntensity = 0.2;
+                    child.material.transparent = true;
+                    child.material.opacity = 0.9;
+                }
+            });
+            
+            brainModel.scale.setScalar(3);
+            return brainModel;
+        } catch (error) {
+            console.log('Could not load external brain model:', error);
+            return null;
+        }
+    }
+
+    createElectricalConnections() {
+        this.gameBrains.forEach((brain, index) => {
+            // Create electrical connection from brain to each game brain
+            const connectionPoints = [];
+            const brainPos = new THREE.Vector3(0, 0, 0);
+            const cubePos = brain.position.clone();
+            
+            // Create a curved path with multiple points
+            const midPoint1 = new THREE.Vector3().lerpVectors(brainPos, cubePos, 0.3);
+            midPoint1.add(new THREE.Vector3(
+                (Math.random() - 0.5) * 6,
+                (Math.random() - 0.5) * 6,
+                (Math.random() - 0.5) * 6
+            ));
+            
+            const midPoint2 = new THREE.Vector3().lerpVectors(brainPos, cubePos, 0.7);
+            midPoint2.add(new THREE.Vector3(
+                (Math.random() - 0.5) * 4,
+                (Math.random() - 0.5) * 4,
+                (Math.random() - 0.5) * 4
+            ));
+            
+            // Create curve
+            const curve = new THREE.CatmullRomCurve3([
+                brainPos,
+                midPoint1,
+                midPoint2,
+                cubePos
+            ]);
+            
+            // Create electrical bolt geometry
+            const points = curve.getPoints(50);
+            const boltGeometry = new THREE.BufferGeometry().setFromPoints(points);
+            
+            const boltMaterial = new THREE.LineBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.8,
+                linewidth: 3
+            });
+            
+            const bolt = new THREE.Line(boltGeometry, boltMaterial);
+            bolt.userData = {
+                curve: curve,
+                targetBrain: brain,
+                pulseOffset: Math.random() * Math.PI * 2,
+                originalOpacity: 0.8
+            };
+            
+            this.electricalConnections.push(bolt);
+            this.scene.add(bolt);
+            
+            // Create neural pulse particles that travel along the connection
+            this.createNeuralPulse(curve, index);
+        });
+    }
+
+    createNeuralPulse(curve, connectionIndex) {
+        const pulseGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+        const pulseMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 1,
+            emissive: 0xffffff,
+            emissiveIntensity: 2
+        });
+        
+        const pulse = new THREE.Mesh(pulseGeometry, pulseMaterial);
+        pulse.userData = {
+            curve: curve,
+            progress: 0,
+            speed: 0.005 + Math.random() * 0.01,
+            connectionIndex: connectionIndex,
+            trailPositions: []
+        };
+        
+        this.neuralPulses.push(pulse);
+        this.scene.add(pulse);
+        
+        // Create pulse trail
+        for (let i = 0; i < 10; i++) {
+            const trailGeometry = new THREE.SphereGeometry(0.05, 6, 6);
+            const trailMaterial = new THREE.MeshBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.5 - (i * 0.05),
+                emissive: 0xffff00,
+                emissiveIntensity: 0.5
+            });
+            
+            const trailParticle = new THREE.Mesh(trailGeometry, trailMaterial);
+            pulse.userData.trailPositions.push(trailParticle);
+            this.scene.add(trailParticle);
+        }
+    }
+
+    setupInteractions() {
+        // Cache cursor element for better performance
+        this.cursor = document.getElementById('cursor');
+        
+        document.addEventListener('mousemove', (event) => {
+            this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            // Enhanced cursor tracking for better visibility
+            this.isHovering = true;
+            
+            this.updateHover();
+            this.createMouseTrail(event.clientX, event.clientY);
+        });
+
+        // Enhanced mobile touch support
+        this.setupMobileSupport();
+        
+        document.addEventListener('click', (event) => {
+            // Don't handle clicks on UI elements
+            if (event.target.closest('.instructions-panel, .activity-indicator, #controlsHint, .game-info-panel, .tips-panel, .play-button, .sound-toggle, .performance-mode, .close-button, button')) {
+                return;
+            }
+            this.handleCubeClick();
+            this.createClickEffect();
+        });
+        
+        // Enhanced keyboard controls
+        document.addEventListener('keydown', (event) => {
+            this.keys[event.code] = true;
+            
+            switch(event.code) {
+                case 'Space':
+                    event.preventDefault();
+                    this.triggerMagicEffect();
+                    break;
+                case 'KeyR':
+                    this.resetCamera();
+                    break;
+                case 'KeyE':
+                    this.triggerEasterEgg();
+                    break;
+                case 'KeyF':
+                    this.toggleFlyMode();
+                    break;
+                case 'Escape':
+                    // Close game panel with escape key
+                    if (document.getElementById('gameInfoPanel').classList.contains('visible')) {
+                        window.closeGamePanel();
+                    }
+                    // Also close controls panel
+                    const controlsHint = document.getElementById('controlsHint');
+                    const controlsToggle = document.getElementById('controlsToggle');
+                    if (controlsHint && controlsHint.classList.contains('visible')) {
+                        controlsHint.classList.remove('visible');
+                        controlsToggle.classList.remove('active');
+                    }
+                    break;
+            }
+        });
+        
+        document.addEventListener('keyup', (event) => {
+            this.keys[event.code] = false;
+        });
+        
+        window.addEventListener('resize', () => {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            this.composer.setSize(window.innerWidth, window.innerHeight);
+        });
+    }
+
+    setupMobileSupport() {
+        // Enhanced mobile detection
+        const isMobile = () => {
+            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                   (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
+        };
+
+        if (isMobile()) {
+            console.log('Mobile device detected - setting up touch controls');
+            
+            // Listen for mobile events from HTML
+            window.addEventListener('mobileCameraMove', (e) => {
+                if (this.flyMode && this.controls) {
+                    // Apply camera movement for fly mode
+                    const sensitivity = 0.002;
+                    this.controls.object.rotation.y -= e.detail.dx * sensitivity;
+                    this.controls.object.rotation.x -= e.detail.dy * sensitivity;
+                    this.controls.object.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.controls.object.rotation.x));
+                }
+            });
+
+            window.addEventListener('mobileTap', (e) => {
+                if (e.detail.x && e.detail.y) {
+                    // Convert touch coordinates to normalized device coordinates
+                    this.mouse.x = (e.detail.x / window.innerWidth) * 2 - 1;
+                    this.mouse.y = -(e.detail.y / window.innerHeight) * 2 + 1;
+                    
+                    // Trigger hover and click
+                    this.updateHover();
+                    this.handleCubeClick();
+                }
+            });
+
+            // Disable cursor for mobile
+            if (this.cursor) {
+                this.cursor.style.display = 'none';
+            }
+        }
+    }
+
+    createMouseTrail(x, y) {
+        if (Math.random() > 0.7) { // Only create trail sometimes
+            const trail = document.createElement('div');
+            trail.style.cssText = `
+                position: fixed;
+                left: ${x}px;
+                top: ${y}px;
+                width: 4px;
+                height: 4px;
+                background: #ffff00;
+                border-radius: 50%;
+                pointer-events: none;
+                z-index: 999;
+                animation: trailFade 1s ease-out forwards;
+            `;
+            
+            // Add trail fade animation
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes trailFade {
+                    to {
+                        opacity: 0;
+                        transform: scale(0);
+                    }
+                }
+            `;
+            if (!document.head.querySelector('style[data-trail]')) {
+                style.setAttribute('data-trail', 'true');
+                document.head.appendChild(style);
+            }
+            
+            document.body.appendChild(trail);
+            setTimeout(() => trail.remove(), 1000);
+        }
+    }
+
+    createClickEffect() {
+        if (this.audioEnabled) {
+            this.sounds.click();
+        }
+        
+        // Screen shake
+        this.cameraShake.intensity = 0.5;
+        
+        // Visual click effect
+        const clickEffect = document.createElement('div');
+        clickEffect.style.cssText = `
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 100px;
+            height: 100px;
+            border: 2px solid #ffff00;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 999;
+            animation: clickRipple 0.6s ease-out forwards;
+        `;
+        
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes clickRipple {
+                to {
+                    opacity: 0;
+                    transform: translate(-50%, -50%) scale(3);
+                }
+            }
+        `;
+        if (!document.head.querySelector('style[data-ripple]')) {
+            style.setAttribute('data-ripple', 'true');
+            document.head.appendChild(style);
+        }
+        
+        document.body.appendChild(clickEffect);
+        setTimeout(() => clickEffect.remove(), 600);
+    }
+
+    updateHover() {
+        // Check if mouse is over the game info panel or controls panel
+        const gameInfoPanel = document.getElementById('gameInfoPanel');
+        const controlsHint = document.getElementById('controlsHint');
+        const instructionsPanel = document.getElementById('instructionsPanel');
+        const mouseX = (this.mouse.x + 1) / 2 * window.innerWidth;
+        const mouseY = (-this.mouse.y + 1) / 2 * window.innerHeight;
+        
+        // Check if over game info panel
+        const panelRect = gameInfoPanel.getBoundingClientRect();
+        const isOverGamePanel = mouseX >= panelRect.left && 
+                               mouseX <= panelRect.right && 
+                               mouseY >= panelRect.top && 
+                               mouseY <= panelRect.bottom;
+        
+        // Check if over controls panel
+        let isOverControlsPanel = false;
+        if (controlsHint && controlsHint.classList.contains('visible')) {
+            const controlsRect = controlsHint.getBoundingClientRect();
+            isOverControlsPanel = mouseX >= controlsRect.left && 
+                                 mouseX <= controlsRect.right && 
+                                 mouseY >= controlsRect.top && 
+                                 mouseY <= controlsRect.bottom;
+        }
+        
+        // Check if over instructions panel
+        let isOverInstructionsPanel = false;
+        if (instructionsPanel && instructionsPanel.classList.contains('open')) {
+            const instructionsRect = instructionsPanel.getBoundingClientRect();
+            isOverInstructionsPanel = mouseX >= instructionsRect.left && 
+                                     mouseX <= instructionsRect.right && 
+                                     mouseY >= instructionsRect.top && 
+                                     mouseY <= instructionsRect.bottom;
+        }
+        
+        // If mouse is over any panel, don't change hover state but update cursor
+        if ((isOverGamePanel && gameInfoPanel.classList.contains('visible')) || 
+            isOverControlsPanel || 
+            isOverInstructionsPanel) {
+            if (this.cursor) {
+                this.cursor.classList.add('hover');
+            }
+            return;
+        } else {
+            // Remove hover class when not over panels
+            if (this.cursor) {
+                this.cursor.classList.remove('hover');
+            }
+        }
+        
+        // Clear any existing hover timeout
+        if (this.hoverTimeout) {
+            clearTimeout(this.hoverTimeout);
+            this.hoverTimeout = null;
+        }
+        
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+        // Reduce the raycaster threshold to make brain hover detection more precise
+        this.raycaster.params.Points.threshold = 0.01;
+        this.raycaster.params.Line.threshold = 0.01;
+        const intersects = this.raycaster.intersectObjects(this.gameBrains, true);
+        
+        // Reset previous hover state
+        if (this.hoveredCube && this.hoveredCube !== this.selectedGame) {
+            gsap.to(this.hoveredCube.scale, {
+                duration: 0.15,
+                x: 1, y: 1, z: 1,
+                ease: "power2.out"
+            });
+            
+            // Reset brain color back to yellow immediately
+            if (this.hoveredCube.userData.mainBrain) {
+                this.hoveredCube.userData.mainBrain.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        gsap.to(child.material.color, {
+                            duration: 0.1,
+                            r: 1, g: 1, b: 0, // Yellow color
+                            ease: "power1.out"
+                        });
+                        gsap.to(child.material.emissive, {
+                            duration: 0.1,
+                            r: 1, g: 1, b: 0, // Yellow emissive
+                            ease: "power1.out"
+                        });
+                        gsap.to(child.material, {
+                            duration: 0.1,
+                            emissiveIntensity: 0.2,
+                            ease: "power1.out"
+                        });
+                    }
+                });
+            }
+        }
+        
+        if (intersects.length > 0) {
+            // Find the brain group (parent)
+            let target = intersects[0].object;
+            while (target.parent && !this.gameBrains.includes(target)) {
+                target = target.parent;
+            }
+            
+            if (this.gameBrains.includes(target)) {
+                if (this.hoveredCube !== target) {
+                    // Play hover sound
+                    if (this.audioEnabled) {
+                        this.sounds.hover();
+                    }
+                }
+                
+                this.hoveredCube = target;
+                if (this.cursor) {
+                    this.cursor.classList.add('hover');
+                }
+                
+                if (this.hoveredCube !== this.selectedGame) {
+                    gsap.to(this.hoveredCube.scale, {
+                        duration: 0.15,
+                        x: 1.2, y: 1.2, z: 1.2,
+                        ease: "back.out(1.7)"
+                    });
+                    
+                    // Change brain color to bright purple on hover immediately
+                    if (target.userData.mainBrain) {
+                        target.userData.mainBrain.traverse((child) => {
+                            if (child.isMesh && child.material) {
+                                gsap.to(child.material.color, {
+                                    duration: 0.1,
+                                    r: 0.8, g: 0.2, b: 1.0, // Bright purple
+                                    ease: "power1.out"
+                                });
+                                gsap.to(child.material.emissive, {
+                                    duration: 0.1,
+                                    r: 0.6, g: 0.1, b: 0.8, // Purple emissive
+                                    ease: "power1.out"
+                                });
+                                gsap.to(child.material, {
+                                    duration: 0.1,
+                                    emissiveIntensity: 0.5, // Higher intensity
+                                    ease: "power1.out"
+                                });
+                            }
+                        });
+                    }
+                    
+                    // Create hover particles
+                    this.createHoverParticles(this.hoveredCube.position);
+                }
+                
+                // Use no delay for immediate response
+                if (this.hoverTimeout) {
+                    clearTimeout(this.hoverTimeout);
+                }
+                this.showGameInfo(this.hoveredCube.userData);
+            }
+        } else if (!isOverPanel) {
+            // Not hovering over any brain and not over panel
+            if (this.hoveredCube) {
+                // Reset brain appearance immediately
+                if (this.hoveredCube !== this.selectedGame) {
+                    gsap.to(this.hoveredCube.scale, {
+                        duration: 0.15,
+                        x: 1, y: 1, z: 1,
+                        ease: "power2.out"
+                    });
+                    
+                    // Reset brain color back to yellow immediately
+                    if (this.hoveredCube.userData.mainBrain) {
+                        this.hoveredCube.userData.mainBrain.traverse((child) => {
+                            if (child.isMesh && child.material) {
+                                gsap.to(child.material.color, {
+                                    duration: 0.1,
+                                    r: 1, g: 1, b: 0, // Yellow color
+                                    ease: "power1.out"
+                                });
+                                gsap.to(child.material.emissive, {
+                                    duration: 0.1,
+                                    r: 1, g: 1, b: 0, // Yellow emissive
+                                    ease: "power1.out"
+                                });
+                                gsap.to(child.material, {
+                                    duration: 0.1,
+                                    emissiveIntensity: 0.2,
+                                    ease: "power1.out"
+                                });
+                            }
+                        });
+                    }
+                }
+                this.hoveredCube = null;
+            }
+            if (this.cursor) {
+                this.cursor.classList.remove('hover');
+            }
+            
+            // Hide game info immediately when not hovering
+            if (!this.selectedGame) {
+                this.hideGameInfo();
+            }
+        }
+    }
+
+    createHoverParticles(position) {
+        if (this.performanceMode === 'low') return;
+        
+        for (let i = 0; i < 5; i++) {
+            const geometry = new THREE.SphereGeometry(0.05, 8, 8);
+            const material = new THREE.MeshBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            const particle = new THREE.Mesh(geometry, material);
+            particle.position.copy(position);
+            particle.position.add(new THREE.Vector3(
+                (Math.random() - 0.5) * 4,
+                (Math.random() - 0.5) * 4,
+                (Math.random() - 0.5) * 4
+            ));
+            
+            this.scene.add(particle);
+            
+            gsap.to(particle.position, {
+                duration: 1,
+                x: particle.position.x + (Math.random() - 0.5) * 6,
+                y: particle.position.y + Math.random() * 3,
+                z: particle.position.z + (Math.random() - 0.5) * 6,
+                ease: "power2.out"
+            });
+            
+            gsap.to(particle.material, {
+                duration: 1,
+                opacity: 0,
+                onComplete: () => {
+                    this.scene.remove(particle);
+                }
+            });
+        }
+    }
+
+    handleCubeClick() {
+        if (this.hoveredCube) {
+            this.selectGame(this.hoveredCube);
+        }
+    }
+
+    selectGame(brain) {
+        // Reset previous selection
+        if (this.selectedGame) {
+            gsap.to(this.selectedGame.scale, {
+                duration: 0.5,
+                x: 1, y: 1, z: 1
+            });
+            
+            // Reset brain color back to yellow
+            if (this.selectedGame.userData.mainBrain) {
+                this.selectedGame.userData.mainBrain.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        gsap.to(child.material.color, {
+                            duration: 0.5,
+                            r: 1, g: 1, b: 0, // Yellow color
+                            ease: "power2.out"
+                        });
+                        gsap.to(child.material.emissive, {
+                            duration: 0.5,
+                            r: 1, g: 1, b: 0, // Yellow emissive
+                            ease: "power2.out"
+                        });
+                        gsap.to(child.material, {
+                            duration: 0.5,
+                            emissiveIntensity: 0.2,
+                            ease: "power2.out"
+                        });
+                    }
+                });
+            }
+        }
+        
+        this.selectedGame = brain;
+        
+        // Highlight selected brain
+        gsap.to(brain.scale, {
+            duration: 0.5,
+            x: 1.4, y: 1.4, z: 1.4,
+            ease: "back.out(1.7)"
+        });
+        
+        // Keep purple highlight for selected brain
+        if (brain.userData.mainBrain) {
+            brain.userData.mainBrain.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    gsap.to(child.material.color, {
+                        duration: 0.5,
+                        r: 0.6, g: 0.2, b: 0.8, // Purple color
+                        ease: "power2.out"
+                    });
+                    gsap.to(child.material.emissive, {
+                        duration: 0.5,
+                        r: 0.6, g: 0.2, b: 0.8, // Purple emissive
+                        ease: "power2.out"
+                    });
+                    gsap.to(child.material, {
+                        duration: 0.5,
+                        emissiveIntensity: 0.7,
+                        ease: "power2.out"
+                    });
+                }
+            });
+        }
+        
+        // Highlight the electrical connection to this brain
+        const connectionIndex = this.gameBrains.indexOf(brain);
+        if (this.electricalConnections[connectionIndex]) {
+            gsap.to(this.electricalConnections[connectionIndex].material, {
+                duration: 0.5,
+                opacity: 1.5,
+                yoyo: true,
+                repeat: 3
+            });
+        }
+        
+        // Central brain responds to selection
+        if (this.centralBrain) {
+            const core = this.centralBrain.userData.core;
+            if (core) {
+                gsap.to(core.scale, {
+                    duration: 0.3,
+                    x: 1.5, y: 1.5, z: 1.5,
+                    yoyo: true,
+                    repeat: 1,
+                    ease: "power2.inOut"
+                });
+            }
+        }
+        
+        // Focus camera on selected brain
+        this.focusOnCube(brain);
+        this.showGameInfo(brain.userData, true);
+    }
+
+    focusOnCube(cube) {
+        const targetPosition = cube.position.clone();
+        targetPosition.add(new THREE.Vector3(0, 0, 12));
+        
+        gsap.to(this.camera.position, {
+            duration: 1.5,
+            x: targetPosition.x,
+            y: targetPosition.y,
+            z: targetPosition.z,
+            ease: "power2.inOut"
+        });
+        
+        gsap.to(this.controls.target, {
+            duration: 1.5,
+            x: cube.position.x,
+            y: cube.position.y,
+            z: cube.position.z,
+            ease: "power2.inOut"
+        });
+    }
+
+    showGameInfo(gameData, isSelected = false) {
+        const panel = document.getElementById('gameInfoPanel');
+        const title = document.getElementById('gameTitle');
+        const description = document.getElementById('gameDescription');
+        const tags = document.getElementById('gameTags');
+        const playButton = document.getElementById('playButton');
+        
+        title.textContent = gameData.title;
+        description.textContent = gameData.description;
+        
+        // Update tags
+        tags.innerHTML = '';
+        gameData.tags.forEach(tag => {
+            const tagElement = document.createElement('span');
+            tagElement.className = 'tag';
+            tagElement.textContent = tag;
+            tags.appendChild(tagElement);
+        });
+        
+        // Add features section if it exists
+        if (gameData.features && gameData.features.length > 0) {
+            const featuresSection = document.createElement('div');
+            featuresSection.className = 'features-section';
+            featuresSection.innerHTML = `
+                <h4>Key Features:</h4>
+                <ul class="features-list">
+                    ${gameData.features.map(feature => `<li>${feature}</li>`).join('')}
+                </ul>
+            `;
+            
+            // Insert features after description
+            const existingFeatures = panel.querySelector('.features-section');
+            if (existingFeatures) {
+                existingFeatures.remove();
+            }
+            description.parentNode.insertBefore(featuresSection, tags);
+        }
+        
+        // Add technology section if it exists
+        if (gameData.technology && gameData.technology.length > 0) {
+            const techSection = document.createElement('div');
+            techSection.className = 'tech-section';
+            techSection.innerHTML = `
+                <h4>Technology:</h4>
+                <div class="tech-tags">
+                    ${gameData.technology.map(tech => `<span class="tech-tag">${tech}</span>`).join('')}
+                </div>
+            `;
+            
+            // Insert tech section after tags
+            const existingTech = panel.querySelector('.tech-section');
+            if (existingTech) {
+                existingTech.remove();
+            }
+            tags.parentNode.insertBefore(techSection, playButton);
+        }
+        
+        // Add gameplay section if it exists
+        if (gameData.gameplay) {
+            const gameplaySection = document.createElement('div');
+            gameplaySection.className = 'gameplay-section';
+            gameplaySection.innerHTML = `
+                <h4>Gameplay:</h4>
+                <p class="gameplay-text">${gameData.gameplay}</p>
+            `;
+            
+            // Insert gameplay section
+            const existingGameplay = panel.querySelector('.gameplay-section');
+            if (existingGameplay) {
+                existingGameplay.remove();
+            }
+            tags.parentNode.insertBefore(gameplaySection, playButton);
+        }
+        
+        // Add status indicator
+        if (gameData.status) {
+            const statusSection = document.createElement('div');
+            statusSection.className = 'status-section';
+            statusSection.innerHTML = `
+                <span class="status-indicator status-${gameData.status.toLowerCase().replace(' ', '-')}">
+                    ${gameData.status}
+                </span>
+            `;
+            
+            // Insert status after title
+            const existingStatus = panel.querySelector('.status-section');
+            if (existingStatus) {
+                existingStatus.remove();
+            }
+            title.parentNode.insertBefore(statusSection, description);
+        }
+        
+        // Update play button text based on game URL
+        if (gameData.url.startsWith('http')) {
+            playButton.textContent = 'Play Game';
+            playButton.style.backgroundColor = '#00ff00';
+            playButton.style.color = '#000000';
+        } else {
+            playButton.textContent = 'Coming Soon';
+            playButton.style.backgroundColor = '#666666';
+            playButton.style.color = '#ffffff';
+        }
+        
+        // Update play button
+        playButton.onclick = () => this.playGame(gameData.url);
+        
+        // Reset scroll position to top when showing new content
+        panel.scrollTop = 0;
+        
+        panel.classList.add('visible');
+        
+        // Store current game for play button
+        window.currentGameUrl = gameData.url;
+        
+        // Ensure content stays within bounds
+        this.ensurePanelContentBounds(panel);
+    }
+
+    ensurePanelContentBounds(panel) {
+        // Check if content overflows and handle gracefully
+        setTimeout(() => {
+            const panelHeight = panel.offsetHeight;
+            const contentHeight = panel.scrollHeight;
+            
+            if (contentHeight > panelHeight) {
+                // Content overflows - ensure smooth scrolling is enabled
+                panel.style.scrollBehavior = 'smooth';
+                
+                // Add scroll indicator if not already present
+                if (!panel.querySelector('.scroll-indicator')) {
+                    const scrollIndicator = document.createElement('div');
+                    scrollIndicator.className = 'scroll-indicator';
+                    scrollIndicator.style.cssText = `
+                        position: absolute;
+                        bottom: 10px;
+                        right: 15px;
+                        color: rgba(255, 255, 0, 0.6);
+                        font-size: 0.7em;
+                        pointer-events: none;
+                        opacity: 0;
+                        transition: opacity 0.3s ease;
+                    `;
+                    scrollIndicator.innerHTML = '⬇ Scroll for more';
+                    panel.appendChild(scrollIndicator);
+                    
+                    // Show scroll indicator briefly
+                    setTimeout(() => {
+                        scrollIndicator.style.opacity = '1';
+                        setTimeout(() => {
+                            scrollIndicator.style.opacity = '0';
+                        }, 2000);
+                    }, 500);
+                }
+            }
+        }, 100);
+    }
+
+    hideGameInfo() {
+        const panel = document.getElementById('gameInfoPanel');
+        panel.classList.remove('visible');
+    }
+
+    playGame(url) {
+        // Handle real game URLs
+        if (url.startsWith('http')) {
+            window.open(url, '_blank');
+        } else {
+            // For placeholder URLs, show a coming soon message
+            alert('This game is still in development. Stay tuned for updates!');
+        }
+    }
+
+    setupEventListeners() {
+        // Global functions for UI buttons
+        window.toggleSound = () => {
+            this.audioEnabled = !this.audioEnabled;
+            const button = document.getElementById('soundToggle');
+            button.textContent = this.audioEnabled ? 'Sound ON' : 'Sound OFF';
+            button.style.color = this.audioEnabled ? '#ffff00' : '#666666';
+        };
+        
+        window.togglePerformance = () => {
+            this.performanceMode = this.performanceMode === 'high' ? 'low' : 'high';
+            const button = document.getElementById('performanceMode');
+            button.textContent = this.performanceMode === 'high' ? 'High Quality' : 'Performance Mode';
+            
+            // Adjust particle counts based on performance mode
+            if (this.backgroundParticles) {
+                const positions = this.backgroundParticles.geometry.attributes.position.array;
+                const visibleCount = this.performanceMode === 'high' ? positions.length : positions.length / 2;
+                this.backgroundParticles.geometry.setDrawRange(0, visibleCount / 3);
+            }
+        };
+        
+        // Global function for play button
+        window.playSelectedGame = () => {
+            if (window.currentGameUrl) {
+                this.playGame(window.currentGameUrl);
+            }
+        };
+
+        // Global function for close button
+        window.closeGamePanel = () => {
+            console.log('Close game panel clicked');
+            this.hideGameInfo();
+            this.resetCamera(); // Reset to overview state
+        };
+
+        // Global function for controls toggle
+        window.toggleControls = () => {
+            const controlsHint = document.getElementById('controlsHint');
+            const controlsToggle = document.getElementById('controlsToggle');
+            
+            if (controlsHint && controlsToggle) {
+                const isVisible = controlsHint.classList.contains('visible');
+                
+                if (isVisible) {
+                    controlsHint.classList.remove('visible');
+                    controlsToggle.classList.remove('active');
+                } else {
+                    controlsHint.classList.add('visible');
+                    controlsToggle.classList.add('active');
+                }
+            }
+        };
+    }
+
+    animate() {
+        requestAnimationFrame(() => this.animate());
+        
+        const deltaTime = this.clock.getDelta();
+        const elapsedTime = this.clock.getElapsedTime();
+        
+        // Update fly controls
+        this.updateFlyControls();
+        
+        // Update camera shake
+        this.updateCameraShake();
+        
+        // Animate central brain
+        if (this.centralBrain) {
+            const time = elapsedTime * 0.5;
+            
+            // Gentle rotation
+            this.centralBrain.rotation.y = Math.sin(time * 0.3) * 0.1;
+            this.centralBrain.rotation.x = Math.sin(time * 0.2) * 0.05;
+            
+            // Animate brain components
+            this.centralBrain.traverse((child) => {
+                if (child.userData.animationOffset !== undefined) {
+                    const phase = time + child.userData.animationOffset;
+                    
+                    if (child.userData.isNode) {
+                        // Pulse brain nodes
+                        const pulse = 1 + Math.sin(phase * 3) * 0.3;
+                        child.scale.setScalar(pulse);
+                        
+                        // Vary node opacity
+                        child.material.opacity = 0.7 + Math.sin(phase * 2) * 0.3;
+                    } else if (child.userData.isPathway) {
+                        // Animate neural pathways
+                        const intensity = 0.2 + Math.sin(phase * 2) * 0.2;
+                        child.material.opacity = intensity;
+                    } else if (child.userData.isFold) {
+                        // Subtle brain fold animation
+                        const intensity = 0.3 + Math.sin(phase * 1.5) * 0.2;
+                        child.material.opacity = intensity;
+                    } else if (child.material && child.material.type === 'LineBasicMaterial') {
+                        // Main brain outline animation
+                        const intensity = 0.6 + Math.sin(phase * 1.2) * 0.3;
+                        child.material.opacity = intensity;
+                        
+                        // Color shifting for neural effect
+                        if (child.userData.originalColor === 0x00ffff) {
+                            const hue = 0.5 + Math.sin(phase * 0.8) * 0.1;
+                            child.material.color.setHSL(hue, 1, 0.7);
+                        } else if (child.userData.originalColor === 0xffff00) {
+                            const hue = 0.16 + Math.sin(phase * 0.6) * 0.05;
+                            child.material.color.setHSL(hue, 1, 0.8);
+                        }
+                    }
+                }
+            });
+        }
+
+        // Animate electrical connections
+        this.electricalConnections.forEach((connection, index) => {
+            const pulse = Math.sin(elapsedTime * 4 + connection.userData.pulseOffset) * 0.4 + 0.8;
+            connection.material.opacity = connection.userData.originalOpacity * pulse;
+        });
+        
+        // Animate neural pulses
+        this.neuralPulses.forEach((pulse) => {
+            pulse.userData.progress += pulse.userData.speed;
+            
+            if (pulse.userData.progress > 1) {
+                pulse.userData.progress = 0;
+                
+                // Trigger arrival effect at game cube
+                const targetBrain = this.gameBrains[pulse.userData.connectionIndex];
+                if (targetCube) {
+                    this.createArrivalEffect(targetCube.position);
+                }
+            }
+            
+            // Update pulse position along curve
+            const position = pulse.userData.curve.getPointAt(pulse.userData.progress);
+            pulse.position.copy(position);
+            
+            // Update trail positions
+            pulse.userData.trailPositions.forEach((trailParticle, index) => {
+                const trailProgress = Math.max(0, pulse.userData.progress - (index + 1) * 0.05);
+                if (trailProgress > 0) {
+                    const trailPos = pulse.userData.curve.getPointAt(trailProgress);
+                    trailParticle.position.copy(trailPos);
+                    trailParticle.visible = true;
+                } else {
+                    trailParticle.visible = false;
+                }
+            });
+        });
+        
+        // Animate game brains
+        this.gameBrains.forEach((brainGroup, index) => {
+            // Floating animation
+            const floatY = Math.sin(elapsedTime * 0.5 + brainGroup.userData.floatOffset) * 0.5;
+            brainGroup.position.y = brainGroup.userData.originalPosition.y + floatY;
+            
+            // Gentle brain rotation
+            const rotSpeed = this.magicMode ? 0.015 : 0.003;
+            brainGroup.rotation.y += rotSpeed;
+            
+            // Slightly tilt the brain for natural movement
+            brainGroup.rotation.x = Math.sin(elapsedTime * 0.3 + index) * 0.1;
+            brainGroup.rotation.z = Math.cos(elapsedTime * 0.4 + index) * 0.05;
+            
+            // Animate particles around brain
+            if (brainGroup.userData.particles) {
+                brainGroup.userData.particles.rotation.y += 0.02;
+            }
+            
+            // Magic mode pulsing for brain - but don't override hover colors
+            if (this.magicMode && brainGroup.userData.mainBrain && this.hoveredCube !== brainGroup) {
+                const pulse = Math.sin(elapsedTime * 3 + index) * 0.3 + 0.5;
+                brainGroup.userData.mainBrain.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        child.material.emissiveIntensity = pulse;
+                    }
+                });
+            }
+            
+            // Animate brain folds (children meshes)
+            brainGroup.children.forEach((child, childIndex) => {
+                if (child.geometry && child.geometry.type === 'TorusGeometry') {
+                    child.rotation.x += 0.001 * (childIndex % 2 === 0 ? 1 : -1);
+                    child.rotation.y += 0.002 * (childIndex % 3 === 0 ? 1 : -1);
+                }
+            });
+        });
+        
+        // Animate background particles
+        if (this.backgroundParticles) {
+            this.backgroundParticles.rotation.y += 0.0005;
+            this.backgroundParticles.rotation.x += 0.0002;
+        }
+        
+        // Animate interactive elements
+        this.interactiveElements.forEach((element, index) => {
+            if (element.userData.rotationSpeed) {
+                element.rotation.x += element.userData.rotationSpeed.x;
+                element.rotation.y += element.userData.rotationSpeed.y;
+                element.rotation.z += element.userData.rotationSpeed.z;
+            }
+            
+            // Pulsing opacity for wireframe elements
+            if (element.userData.pulseSpeed) {
+                const pulse = Math.sin(elapsedTime * element.userData.pulseSpeed) * 0.1 + 0.15;
+                element.material.opacity = element.userData.originalOpacity + pulse;
+            }
+            
+            // Ring rotation
+            if (element.userData.rotationSpeed && element.geometry.type === 'RingGeometry') {
+                element.rotation.z += element.userData.rotationSpeed;
+                const pulse = Math.sin(elapsedTime * 2 + element.userData.pulsePhase) * 0.05 + 0.1;
+                element.material.opacity = element.userData.originalOpacity + pulse;
+            }
+            
+            // Orb orbiting
+            if (element.userData.orbitRadius) {
+                element.userData.orbitAngle += element.userData.orbitSpeed;
+                const x = Math.cos(element.userData.orbitAngle) * element.userData.orbitRadius;
+                const z = Math.sin(element.userData.orbitAngle) * element.userData.orbitRadius;
+                const y = Math.sin(elapsedTime * element.userData.floatSpeed + element.userData.floatPhase) * 5;
+                element.position.set(x, y, z);
+            }
+        });
+        
+        // Update Matrix Rain effect (Easter Egg)
+        if (this.easterEggActive) {
+            this.updateMatrixRain();
+        }
+        
+        this.controls.update();
+        this.composer.render();
+    }
+
+    createArrivalEffect(position) {
+        // Create small explosion when neural pulse reaches game cube
+        for (let i = 0; i < 8; i++) {
+            const geometry = new THREE.SphereGeometry(0.05, 6, 6);
+            const material = new THREE.MeshBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 1,
+                emissive: 0xffff00,
+                emissiveIntensity: 2
+            });
+            
+            const particle = new THREE.Mesh(geometry, material);
+            particle.position.copy(position);
+            particle.position.add(new THREE.Vector3(
+                (Math.random() - 0.5) * 1,
+                (Math.random() - 0.5) * 1,
+                (Math.random() - 0.5) * 1
+            ));
+            
+            this.scene.add(particle);
+            
+            gsap.to(particle.position, {
+                duration: 0.5,
+                x: particle.position.x + (Math.random() - 0.5) * 3,
+                y: particle.position.y + (Math.random() - 0.5) * 3,
+                z: particle.position.z + (Math.random() - 0.5) * 3,
+                ease: "power2.out"
+            });
+            
+            gsap.to(particle.material, {
+                duration: 0.5,
+                opacity: 0,
+                onComplete: () => {
+                    this.scene.remove(particle);
+                }
+            });
+        }
+    }
+
+    triggerMagicEffect() {
+        if (this.audioEnabled) {
+            this.sounds.magic();
+        }
+        
+        this.magicMode = !this.magicMode;
+        this.cameraShake.intensity = 1.0;
+        
+        // Brain activation effect
+        if (this.centralBrain) {
+            const brain = this.centralBrain.userData.brain;
+            const core = this.centralBrain.userData.core;
+            
+            if (this.magicMode) {
+                gsap.to(brain.material, {
+                    duration: 1,
+                    emissiveIntensity: 0.8
+                });
+                gsap.to(core.material, {
+                    duration: 1,
+                    emissiveIntensity: 3
+                });
+            } else {
+                gsap.to(brain.material, {
+                    duration: 1,
+                    emissiveIntensity: 0.3
+                });
+                gsap.to(core.material, {
+                    duration: 1,
+                    emissiveIntensity: 1
+                });
+            }
+        }
+        
+        // Electrical surge through connections
+        this.electricalConnections.forEach((connection, index) => {
+            gsap.to(connection.material, {
+                duration: 0.5,
+                opacity: this.magicMode ? 1.5 : 0.8,
+                yoyo: true,
+                repeat: 3,
+                delay: index * 0.1
+            });
+        });
+        
+        // Magic particle explosion from brain
+        const brainCenter = new THREE.Vector3(0, 0, 0);
+        
+        for (let i = 0; i < 30; i++) {
+            const geometry = new THREE.SphereGeometry(0.1, 8, 8);
+            const material = new THREE.MeshBasicMaterial({
+                color: Math.random() > 0.5 ? 0xffff00 : 0xffffff,
+                transparent: true,
+                opacity: 1
+            });
+            
+            const particle = new THREE.Mesh(geometry, material);
+            particle.position.copy(brainCenter);
+            this.scene.add(particle);
+            
+            const direction = new THREE.Vector3(
+                (Math.random() - 0.5) * 2,
+                (Math.random() - 0.5) * 2,
+                (Math.random() - 0.5) * 2
+            ).normalize();
+            
+            gsap.to(particle.position, {
+                duration: 2,
+                x: particle.position.x + direction.x * 15,
+                y: particle.position.y + direction.y * 15,
+                z: particle.position.z + direction.z * 15,
+                ease: "power2.out"
+            });
+            
+            gsap.to(particle.material, {
+                duration: 2,
+                opacity: 0,
+                onComplete: () => {
+                    this.scene.remove(particle);
+                }
+            });
+        }
+        
+        // Make all brains respond to brain activity
+        this.gameBrains.forEach((brain, index) => {
+            gsap.to(brain.rotation, {
+                duration: 1,
+                x: brain.rotation.x + Math.PI * 2,
+                y: brain.rotation.y + Math.PI * 2,
+                ease: "power2.inOut",
+                delay: index * 0.1
+            });
+        });
+    }
+
+    resetCamera() {
+        if (this.audioEnabled) {
+            this.sounds.whoosh();
+        }
+        
+        // Hide game info panel
+        this.hideGameInfo();
+        
+        // Focus on the brain when resetting - better overview
+        gsap.to(this.camera.position, {
+            duration: 1.5,
+            x: 0, y: 0, z: 30,
+            ease: "power2.inOut"
+        });
+        
+        gsap.to(this.controls.target, {
+            duration: 1.5,
+            x: 0, y: 0, z: 0,
+            ease: "power2.inOut",
+            onComplete: () => {
+                this.controls.update();
+            }
+        });
+        
+        // Reset selected game and its colors
+        if (this.selectedGame) {
+            gsap.to(this.selectedGame.scale, {
+                duration: 0.5,
+                x: 1, y: 1, z: 1
+            });
+            
+            // Reset brain color back to yellow
+            if (this.selectedGame.userData.mainBrain) {
+                this.selectedGame.userData.mainBrain.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        gsap.to(child.material.color, {
+                            duration: 0.5,
+                            r: 1, g: 1, b: 0, // Yellow color
+                            ease: "power2.out"
+                        });
+                        gsap.to(child.material.emissive, {
+                            duration: 0.5,
+                            r: 1, g: 1, b: 0, // Yellow emissive
+                            ease: "power2.out"
+                        });
+                        gsap.to(child.material, {
+                            duration: 0.5,
+                            emissiveIntensity: 0.2,
+                            ease: "power2.out"
+                        });
+                    }
+                });
+            }
+            
+            this.selectedGame = null;
+        }
+        
+        // Reset hovered game and its colors
+        if (this.hoveredCube) {
+            gsap.to(this.hoveredCube.scale, {
+                duration: 0.3,
+                x: 1, y: 1, z: 1,
+                ease: "power2.out"
+            });
+            
+            // Reset brain color back to yellow
+            if (this.hoveredCube.userData.mainBrain) {
+                this.hoveredCube.userData.mainBrain.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        gsap.to(child.material.color, {
+                            duration: 0.3,
+                            r: 1, g: 1, b: 0, // Yellow color
+                            ease: "power2.out"
+                        });
+                        gsap.to(child.material.emissive, {
+                            duration: 0.3,
+                            r: 1, g: 1, b: 0, // Yellow emissive
+                            ease: "power2.out"
+                        });
+                        gsap.to(child.material, {
+                            duration: 0.3,
+                            emissiveIntensity: 0.2,
+                            ease: "power2.out"
+                        });
+                    }
+                });
+            }
+            
+            this.hoveredCube = null;
+        }
+        
+        // Brain activation effect
+        if (this.centralBrain) {
+            const core = this.centralBrain.userData.core;
+            if (core) {
+                gsap.to(core.scale, {
+                    duration: 0.5,
+                    x: 2, y: 2, z: 2,
+                    yoyo: true,
+                    repeat: 1,
+                    ease: "power2.inOut"
+                });
+            }
+        }
+    }
+
+    triggerEasterEgg() {
+        this.easterEggActive = !this.easterEggActive;
+        
+        if (this.easterEggActive) {
+            console.log('🎉 Matrix Mode Activated! Enter the Neural Network...');
+            
+            // Create digital rain effect
+            this.createMatrixRain();
+            
+            // Transform brain materials to green digital glow
+            this.gameBrains.forEach((brain, index) => {
+                if (brain.userData.mainBrain) {
+                    // Green matrix glow
+                    gsap.to(brain.userData.mainBrain.material.color, {
+                        duration: 1.5,
+                        r: 0, g: 1, b: 0.3,
+                        ease: "power2.inOut"
+                    });
+                    
+                    // Add pulsing emissive effect
+                    gsap.to(brain.userData.mainBrain.material, {
+                        duration: 1.5,
+                        emissiveIntensity: 0.4,
+                        ease: "power2.inOut"
+                    });
+                    
+                    brain.userData.mainBrain.material.emissive.setHex(0x004400);
+                }
+            });
+            
+            // Transform particle systems to matrix style
+            if (this.neuralParticleSystem) {
+                this.neuralParticleSystem.material.color.setHex(0x00ff44);
+                this.neuralParticleSystem.material.size = 8;
+            }
+            
+            // Dark green fog for matrix atmosphere
+            gsap.to(this.scene.fog.color, {
+                duration: 2,
+                r: 0, g: 0.05, b: 0.02,
+                ease: "power2.inOut"
+            });
+            
+            // Animate camera with subtle matrix-style movement
+            this.startMatrixCameraEffect();
+            
+        } else {
+            console.log('🔄 Exiting Matrix Mode... Reality restored.');
+            
+            // Clean up matrix rain
+            this.cleanupMatrixRain();
+            
+            // Return brains to normal colors
+            this.gameBrains.forEach((brain) => {
+                const originalColor = brain.userData.color;
+                if (brain.userData.mainBrain) {
+                    gsap.to(brain.userData.mainBrain.material.color, {
+                        duration: 2,
+                        r: (originalColor >> 16 & 255) / 255,
+                        g: (originalColor >> 8 & 255) / 255,
+                        b: (originalColor & 255) / 255,
+                        ease: "power2.inOut"
+                    });
+                    
+                    // Remove emissive effect
+                    gsap.to(brain.userData.mainBrain.material, {
+                        duration: 2,
+                        emissiveIntensity: 0,
+                        ease: "power2.inOut"
+                    });
+                    
+                    brain.userData.mainBrain.material.emissive.setHex(0x000000);
+                }
+            });
+            
+            // Restore particle systems
+            if (this.neuralParticleSystem) {
+                this.neuralParticleSystem.material.color.setHex(0xffff00);
+                this.neuralParticleSystem.material.size = 4;
+            }
+            
+            // Restore normal fog
+            gsap.to(this.scene.fog.color, {
+                duration: 2,
+                r: 0, g: 0, b: 0,
+                ease: "power2.inOut"
+            });
+            
+            // Stop matrix camera effect
+            this.stopMatrixCameraEffect();
+        }
+    }
+
+    // Matrix Rain Effect Methods
+    createMatrixRain() {
+        if (!this.matrixRainActive) {
+            this.matrixRainActive = true;
+            this.matrixDrops = [];
+            
+            // Create digital rain columns
+            const columnCount = 50;
+            for (let i = 0; i < columnCount; i++) {
+                const x = (Math.random() - 0.5) * 200;
+                const z = (Math.random() - 0.5) * 200;
+                
+                // Create column of digital characters
+                const columnHeight = 15 + Math.random() * 10;
+                for (let j = 0; j < columnHeight; j++) {
+                    const geometry = new THREE.PlaneGeometry(1, 1);
+                    
+                    // Create texture with digital characters
+                    const canvas = document.createElement('canvas');
+                    canvas.width = canvas.height = 32;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#00ff44';
+                    ctx.font = '24px Courier New';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    
+                    // Random digital characters (Matrix style)
+                    const chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                    const char = chars.charAt(Math.floor(Math.random() * chars.length));
+                    ctx.fillText(char, 16, 16);
+                    
+                    const texture = new THREE.CanvasTexture(canvas);
+                    const material = new THREE.MeshBasicMaterial({
+                        map: texture,
+                        transparent: true,
+                        opacity: Math.max(0.1, 1 - j * 0.08),
+                        side: THREE.DoubleSide
+                    });
+                    
+                    const drop = new THREE.Mesh(geometry, material);
+                    drop.position.set(x, 50 - j * 4, z);
+                    drop.lookAt(this.camera.position);
+                    
+                    drop.userData = {
+                        speed: 0.3 + Math.random() * 0.4,
+                        originalY: drop.position.y,
+                        resetY: 50,
+                        char: char,
+                        column: i,
+                        index: j
+                    };
+                    
+                    this.scene.add(drop);
+                    this.matrixDrops.push(drop);
+                }
+            }
+            
+            console.log(`🌧️ Matrix Rain Started: ${this.matrixDrops.length} digital drops`);
+        }
+    }
+    
+    cleanupMatrixRain() {
+        if (this.matrixRainActive) {
+            this.matrixRainActive = false;
+            
+            if (this.matrixDrops) {
+                this.matrixDrops.forEach(drop => {
+                    this.scene.remove(drop);
+                    if (drop.material.map) drop.material.map.dispose();
+                    drop.material.dispose();
+                    drop.geometry.dispose();
+                });
+                this.matrixDrops = [];
+            }
+            
+            console.log('🧹 Matrix Rain Cleaned Up');
+        }
+    }
+    
+    updateMatrixRain() {
+        if (this.matrixRainActive && this.matrixDrops) {
+            this.matrixDrops.forEach(drop => {
+                // Move drop downward
+                drop.position.y -= drop.userData.speed;
+                
+                // Reset when it goes too low
+                if (drop.position.y < -60) {
+                    drop.position.y = drop.userData.resetY + Math.random() * 20;
+                    
+                    // Change character occasionally
+                    if (Math.random() < 0.1) {
+                        const chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                        const newChar = chars.charAt(Math.floor(Math.random() * chars.length));
+                        
+                        const canvas = document.createElement('canvas');
+                        canvas.width = canvas.height = 32;
+                        const ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#00ff44';
+                        ctx.font = '24px Courier New';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(newChar, 16, 16);
+                        
+                        drop.material.map.dispose();
+                        drop.material.map = new THREE.CanvasTexture(canvas);
+                        drop.userData.char = newChar;
+                    }
+                }
+                
+                // Make drops face the camera
+                drop.lookAt(this.camera.position);
+            });
+        }
+    }
+    
+    startMatrixCameraEffect() {
+        if (!this.matrixCameraInterval) {
+            this.matrixCameraInterval = setInterval(() => {
+                if (this.easterEggActive) {
+                    // Subtle matrix-style camera glitch
+                    const glitchX = (Math.random() - 0.5) * 0.1;
+                    const glitchY = (Math.random() - 0.5) * 0.1;
+                    
+                    gsap.to(this.camera.position, {
+                        duration: 0.1,
+                        x: this.camera.position.x + glitchX,
+                        y: this.camera.position.y + glitchY,
+                        ease: "power2.out"
+                    });
+                    
+                    // Quick return
+                    gsap.to(this.camera.position, {
+                        duration: 0.2,
+                        x: this.camera.position.x - glitchX,
+                        y: this.camera.position.y - glitchY,
+                        delay: 0.1,
+                        ease: "power2.out"
+                    });
+                }
+            }, 2000 + Math.random() * 3000); // Random intervals
+        }
+    }
+    
+    stopMatrixCameraEffect() {
+        if (this.matrixCameraInterval) {
+            clearInterval(this.matrixCameraInterval);
+            this.matrixCameraInterval = null;
+        }
+    }
+
+    toggleFlyMode() {
+        this.flyMode = !this.flyMode;
+        this.controls.enablePan = this.flyMode;
+        this.controls.enableRotate = !this.flyMode;
+        
+        const hint = document.createElement('div');
+        hint.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: #ffff00;
+            padding: 15px 25px;
+            border-radius: 10px;
+            font-size: 1.2em;
+            z-index: 1000;
+            border: 1px solid rgba(255, 255, 0, 0.3);
+        `;
+        hint.textContent = `Fly Mode: ${this.flyMode ? 'ON' : 'OFF'}`;
+        document.body.appendChild(hint);
+        
+        setTimeout(() => hint.remove(), 2000);
+    }
+
+    updateFlyControls() {
+        if (!this.flyMode) return;
+        
+        const speed = 0.5;
+        const direction = new THREE.Vector3();
+        
+        if (this.keys['KeyW']) direction.z -= speed;
+        if (this.keys['KeyS']) direction.z += speed;
+        if (this.keys['KeyA']) direction.x -= speed;
+        if (this.keys['KeyD']) direction.x += speed;
+        if (this.keys['KeyQ']) direction.y += speed;
+        if (this.keys['KeyE']) direction.y -= speed;
+        
+        if (direction.length() > 0) {
+            direction.applyQuaternion(this.camera.quaternion);
+            this.camera.position.add(direction);
+        }
+    }
+
+    updateCameraShake() {
+        if (this.cameraShake.intensity > 0) {
+            this.camera.position.x += (Math.random() - 0.5) * this.cameraShake.intensity;
+            this.camera.position.y += (Math.random() - 0.5) * this.cameraShake.intensity;
+            this.cameraShake.intensity *= this.cameraShake.decay;
+            
+            if (this.cameraShake.intensity < 0.01) {
+                this.cameraShake.intensity = 0;
+            }
+        }
+    }
+
+    // Helper function to log model loading instructions
+    logModelInstructions() {
+        console.log(`
+BRAIN MODEL SETUP INSTRUCTIONS:
+
+1. Download a brain model from:
+   - Sketchfab: https://sketchfab.com/3d-models?q=brain&features=downloadable
+   - NIH 3D Print: https://3dprint.nih.gov/discover/3dpx-000539
+   - Free3D: https://free3d.com/3d-models/brain
+
+2. Save the model file as:
+   - /public/models/brain.gltf (preferred)
+   - /public/models/brain.glb
+   - /public/models/brain.obj
+
+3. Refresh the page to see your realistic brain model!
+
+Currently using: Procedural brain (fallback)
+For better visuals, add a real 3D brain model to /public/models/
+        `);
+    }
+}
+
+// Initialize the game portfolio
+new GamePortfolio3D();

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Download 3D Brain Model</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #000; color: #fff; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .model-option { 
+            background: #111; 
+            padding: 20px; 
+            margin: 20px 0; 
+            border-radius: 10px;
+            border: 1px solid #333;
+        }
+        .model-option h3 { color: #ffff00; }
+        .btn { 
+            background: #ffff00; 
+            color: #000; 
+            padding: 10px 20px; 
+            text-decoration: none; 
+            border-radius: 5px;
+            display: inline-block;
+            margin: 10px 10px 10px 0;
+        }
+        .btn:hover { background: #fff; }
+        code { background: #222; padding: 5px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧠 3D Brain Model Resources</h1>
+        <p>To get a realistic brain model for your portfolio, you can download from these sources:</p>
+        
+        <div class="model-option">
+            <h3>Option 1: Sketchfab (Free)</h3>
+            <p>High-quality brain models with proper licensing</p>
+            <a href="https://sketchfab.com/3d-models?q=brain&features=downloadable&sort_by=-likeCount" class="btn" target="_blank">Browse Brain Models</a>
+            <p><strong>Steps:</strong></p>
+            <ol>
+                <li>Find a brain model you like</li>
+                <li>Download as GLTF/GLB format</li>
+                <li>Save as <code>/public/models/brain.gltf</code></li>
+                <li>Refresh your page</li>
+            </ol>
+        </div>
+        
+        <div class="model-option">
+            <h3>Option 2: NIH 3D Print Exchange</h3>
+            <p>Medical-grade brain models from National Institutes of Health</p>
+            <a href="https://3dprint.nih.gov/discover/3dpx-000539" class="btn" target="_blank">NIH Brain Models</a>
+            <p>High accuracy, scientific models perfect for neural themes</p>
+        </div>
+        
+        <div class="model-option">
+            <h3>Option 3: Free3D</h3>
+            <p>Various brain models in different formats</p>
+            <a href="https://free3d.com/3d-models/brain" class="btn" target="_blank">Free3D Brain Models</a>
+        </div>
+        
+        <div class="model-option">
+            <h3>Option 4: TurboSquid Free</h3>
+            <p>Professional quality models (some free)</p>
+            <a href="https://www.turbosquid.com/Search/3D-Models/free/brain" class="btn" target="_blank">TurboSquid Free Models</a>
+        </div>
+        
+        <div class="model-option">
+            <h3>Quick Implementation</h3>
+            <p>Once you download a model:</p>
+            <ol>
+                <li>Place the file in <code>/public/models/</code></li>
+                <li>Rename it to <code>brain.gltf</code> or <code>brain.glb</code></li>
+                <li>The system will automatically load it instead of the procedural brain</li>
+            </ol>
+            <p><strong>Supported formats:</strong> GLTF, GLB, OBJ, FBX</p>
+        </div>
+        
+        <div class="model-option">
+            <h3>Model Requirements</h3>
+            <ul>
+                <li>Scale: Roughly 2-5 units in size</li>
+                <li>Format: GLTF/GLB preferred for best performance</li>
+                <li>Polygons: 10K-50K triangles for good performance</li>
+                <li>Textures: Optional, will be overridden with neural theme</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
