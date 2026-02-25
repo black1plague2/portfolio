@@ -1,0 +1,64 @@
+version: '3.9'
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: handloom-mongo
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - handloom-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: handloom-backend
+    restart: unless-stopped
+    ports:
+      - '5000:5000'
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      MONGO_URI: ${MONGO_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET}
+      CLIENT_URL: ${CLIENT_URL}
+      PLATFORM_COMMISSION_RATE: ${PLATFORM_COMMISSION_RATE}
+      ADVANCE_PAYMENT_RATE: ${ADVANCE_PAYMENT_RATE}
+    networks:
+      - handloom-net
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:5000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: handloom-frontend
+    restart: unless-stopped
+    ports:
+      - '80:80'
+    depends_on:
+      - backend
+    networks:
+      - handloom-net
+
+networks:
+  handloom-net:
+    driver: bridge
+
+volumes:
+  mongo-data:
