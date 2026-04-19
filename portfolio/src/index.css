@@ -1,0 +1,87 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-primary: #05050f;
+  --bg-secondary: #0d0d1f;
+  --bg-card: rgba(255, 255, 255, 0.035);
+  --bg-card-hover: rgba(255, 255, 255, 0.07);
+
+  --neon-purple: #7c3aed;
+  --neon-cyan: #00f5ff;
+  --neon-pink: #ff006e;
+  --neon-green: #39ff14;
+  --neon-orange: #ff6b00;
+  --neon-yellow: #ffd60a;
+
+  --gradient-main: linear-gradient(135deg, #7c3aed 0%, #00f5ff 50%, #ff006e 100%);
+  --gradient-subtle: linear-gradient(135deg, rgba(124,58,237,0.15) 0%, rgba(0,245,255,0.1) 100%);
+
+  --text-primary: #f0f0ff;
+  --text-secondary: #9090b8;
+  --text-muted: #55557a;
+
+  --border-color: rgba(124, 58, 237, 0.25);
+  --border-bright: rgba(0, 245, 255, 0.4);
+
+  --glow-purple: 0 0 20px rgba(124,58,237,0.5), 0 0 60px rgba(124,58,237,0.2);
+  --glow-cyan: 0 0 20px rgba(0,245,255,0.5), 0 0 60px rgba(0,245,255,0.2);
+  --glow-pink: 0 0 20px rgba(255,0,110,0.5), 0 0 60px rgba(255,0,110,0.2);
+
+  font-family: 'Inter', system-ui, sans-serif;
+  line-height: 1.6;
+  font-weight: 400;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: var(--bg-primary);
+}
+
+a {
+  color: var(--neon-cyan);
+  text-decoration: none;
+  transition: color 0.25s;
+}
+
+a:hover {
+  color: var(--neon-purple);
+}
+
+::selection {
+  background: rgba(124, 58, 237, 0.4);
+  color: #fff;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--neon-purple);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--neon-cyan);
+}
