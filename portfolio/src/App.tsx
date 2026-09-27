@@ -154,6 +154,7 @@ function Hero() {
         <div className="hero__cta">
           <a href="#projects" className="btn btn--primary">View My Work</a>
           <a href="#contact" className="btn btn--ghost">Get In Touch</a>
+          <a href="/Garv_Bansal_Resume.pdf" target="_blank" rel="noopener noreferrer" className="btn btn--ghost">Resume</a>
         </div>
         <div className="hero__socials">
           {['GitHub', 'LinkedIn', 'Twitter'].map(s => (
